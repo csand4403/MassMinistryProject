@@ -9,6 +9,7 @@ import {
   LANGUAGE_SHORT,
   DAY_TYPE_LABELS,
   ROLE_SHORT_LABELS,
+  dbToMassDayType,
 } from "@/types";
 import type { MassTemplate } from "@/types";
 
@@ -59,7 +60,7 @@ function TemplateCard({ template: t }: { template: MassTemplate }) {
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-base font-semibold text-slate-800">{t.name}</h3>
             <span className="text-xs rounded-full px-2 py-0.5 bg-navy-100 text-navy-700 font-medium">
-              {DAY_TYPE_LABELS[t.day_type]}
+              {DAY_TYPE_LABELS[dbToMassDayType(t.day_type, t.day_of_week)]}
             </span>
             <span className="text-xs rounded-full px-2 py-0.5 bg-parish-100 text-parish-700 font-medium">
               {LANGUAGE_SHORT[t.language]}

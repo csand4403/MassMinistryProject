@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { ROLE_LABELS } from "@/types";
+import { ROLE_LABELS, MULTI_SLOT_ROLES } from "@/types";
 import { RosterRow } from "./RosterRow";
 import { AssignMinisterModal } from "./AssignMinisterModal";
 import type { Assignment, Minister, CheckIn, MinisterRole } from "@/types";
@@ -32,7 +32,7 @@ export function RoleSectionWithAssign({
   const isDeacon = role === "DEACON";
 
   // Multi-slot roles allow multiple assignments; LECTOR capped at 2
-  const isMultiSlot = ["LECTOR", "EMHC", "USHER", "SECURITY"].includes(role);
+  const isMultiSlot = MULTI_SLOT_ROLES.includes(role);
   const isLectorFull = role === "LECTOR" && assignments.length >= 2;
 
   // For single-slot roles, pass the existing (first) assignment for replace logic

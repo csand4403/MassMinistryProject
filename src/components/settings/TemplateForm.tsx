@@ -9,6 +9,7 @@ import {
   LANGUAGE_LABELS,
   DAY_TYPE_LABELS,
   ROLE_DISPLAY_ORDER,
+  dbToMassDayType,
 } from "@/types";
 import type { MassTemplate, MinisterRole, MassDayType, MassLanguage } from "@/types";
 
@@ -22,7 +23,17 @@ const LANGUAGE_OPTIONS: MassLanguage[] = [
   "BILINGUAL_EN_FR",
 ];
 
-const DAY_TYPE_OPTIONS: MassDayType[] = ["SUNDAY", "WEEKDAY", "HOLY_DAY", "SCHOOL_MASS"];
+const DAY_TYPE_OPTIONS: MassDayType[] = [
+  "SUNDAY",
+  "SATURDAY",
+  "MONDAY",
+  "TUESDAY",
+  "WEDNESDAY",
+  "THURSDAY",
+  "FRIDAY",
+  "HOLY_DAY",
+  "SCHOOL_MASS",
+];
 
 interface RoleConfig {
   role: MinisterRole;
@@ -51,7 +62,9 @@ export function TemplateForm({ template }: TemplateFormProps) {
   const [error, setError] = useState<string | null>(null);
 
   const [name, setName] = useState(template?.name ?? "");
-  const [dayType, setDayType] = useState<MassDayType>(template?.day_type ?? "SUNDAY");
+  const [dayType, setDayType] = useState<MassDayType>(
+    template ? dbToMassDayType(template.day_type, template.day_of_week) : "SUNDAY"
+  );
   const [startTime, setStartTime] = useState(template?.start_time ?? "08:00");
   const [language, setLanguage] = useState<MassLanguage>(template?.language ?? "ENGLISH");
   const [notes, setNotes] = useState(template?.notes ?? "");

@@ -4,6 +4,13 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType } from "@/types";
+import { DAY_TYPE_TO_DB } from "@/types";
+import {
+  generateMassTimesForTemplate,
+  propagateTemplateUpdates,
+  smartDeleteTemplateMasses,
+  backfillTemplateLinks,
+} from "@/lib/schedule-engine";
 
 // ---------------------------------------------------------------------------
 // Check-in
@@ -93,6 +100,50 @@ export async function createAssignment(
 
   revalidatePath("/", "layout");
   return { success: true, id: data.id };
+}
+
+export async function createMultipleAssignments(
+  massTimeId: string,
+  ministerIds: string[],
+  role: MinisterRole,
+): Promise<{ success: boolean; error?: string }> {
+  if (ministerIds.length === 0) return { success: true };
+  const supabase = await createClient();
+
+  let rows: { mass_time_id: string; minister_id: string; role: string; status: string; reading_label: null }[];
+
+  if (role === "LECTOR") {
+    const { data: existing } = await supabase
+      .from("assignment")
+      .select("role")
+      .eq("mass_time_id", massTimeId)
+      .in("role", ["LECTOR_1", "LECTOR_2"]);
+    const usedRoles = new Set((existing ?? []).map((a: { role: string }) => a.role));
+    const available = ["LECTOR_1", "LECTOR_2"].filter((r) => !usedRoles.has(r));
+    rows = ministerIds.slice(0, available.length).map((ministerId, i) => ({
+      mass_time_id: massTimeId,
+      minister_id: ministerId,
+      role: available[i],
+      status: "SCHEDULED",
+      reading_label: null,
+    }));
+  } else {
+    rows = ministerIds.map((ministerId) => ({
+      mass_time_id: massTimeId,
+      minister_id: ministerId,
+      role,
+      status: "SCHEDULED",
+      reading_label: null,
+    }));
+  }
+
+  if (rows.length === 0) return { success: true };
+
+  const { error } = await supabase.from("assignment").insert(rows);
+  if (error) return { success: false, error: error.message };
+
+  revalidatePath("/", "layout");
+  return { success: true };
 }
 
 export async function deleteAssignment(
@@ -207,7 +258,7 @@ export async function createTemplate(formData: {
   language: MassLanguage;
   notes?: string;
   role_configs: { role: string; min_count: number; max_count: number }[];
-}): Promise<{ success: boolean; error?: string; id?: string }> {
+}): Promise<{ success: boolean; error?: string; id?: string; generated?: { liturgicalDates: number; massTimes: number } }> {
   const supabase = await createClient();
 
   const { data: parish, error: pError } = await supabase
@@ -216,12 +267,15 @@ export async function createTemplate(formData: {
     .single();
   if (pError) return { success: false, error: pError.message };
 
+  const { day_type: dbDayType, day_of_week: dbDayOfWeek } = DAY_TYPE_TO_DB[formData.day_type];
+
   const { data: template, error: tError } = await supabase
     .from("mass_template")
     .insert({
       parish_id: parish.id,
       name: formData.name,
-      day_type: formData.day_type,
+      day_type: dbDayType,
+      day_of_week: dbDayOfWeek,
       start_time: formData.start_time,
       language: formData.language,
       notes: formData.notes ?? null,
@@ -248,8 +302,20 @@ export async function createTemplate(formData: {
     if (rcError) return { success: false, error: rcError.message };
   }
 
+  // Generate calendar records for the next 12 months
+  const adminClient = createAdminClient();
+  const genResult = await generateMassTimesForTemplate(adminClient, template.id, parish.id);
+
   revalidatePath("/settings");
-  return { success: true, id: template.id };
+  revalidatePath("/", "layout");
+  return {
+    success: true,
+    id: template.id,
+    generated: {
+      liturgicalDates: genResult.liturgicalDatesCreated,
+      massTimes: genResult.massTimesCreated + genResult.massTimesLinked,
+    },
+  };
 }
 
 export async function updateTemplate(
@@ -265,11 +331,21 @@ export async function updateTemplate(
 ): Promise<{ success: boolean; error?: string }> {
   const supabase = await createClient();
 
+  // Read existing template to detect changes that need propagation
+  const { data: existing } = await supabase
+    .from("mass_template")
+    .select("start_time, language")
+    .eq("id", id)
+    .single();
+
+  const { day_type: dbDayType, day_of_week: dbDayOfWeek } = DAY_TYPE_TO_DB[formData.day_type];
+
   const { error: tError } = await supabase
     .from("mass_template")
     .update({
       name: formData.name,
-      day_type: formData.day_type,
+      day_type: dbDayType,
+      day_of_week: dbDayOfWeek,
       start_time: formData.start_time,
       language: formData.language,
       notes: formData.notes ?? null,
@@ -298,6 +374,18 @@ export async function updateTemplate(
     if (rcError) return { success: false, error: rcError.message };
   }
 
+  // Propagate start_time and/or language changes to future linked mass_times
+  if (existing) {
+    const propagationUpdates: { start_time?: string; language?: MassLanguage } = {};
+    if (existing.start_time !== formData.start_time) propagationUpdates.start_time = formData.start_time;
+    if (existing.language !== formData.language) propagationUpdates.language = formData.language;
+
+    if (Object.keys(propagationUpdates).length > 0) {
+      const adminClient = createAdminClient();
+      await propagateTemplateUpdates(adminClient, id, propagationUpdates);
+    }
+  }
+
   revalidatePath("/settings");
   revalidatePath("/", "layout");
   return { success: true };
@@ -306,8 +394,11 @@ export async function updateTemplate(
 export async function deleteTemplate(
   id: string
 ): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createClient();
+  // Clean up future mass_times: unlink staffed, delete unstaffed
+  const adminClient = createAdminClient();
+  await smartDeleteTemplateMasses(adminClient, id);
 
+  const supabase = await createClient();
   const { error } = await supabase
     .from("mass_template")
     .delete()
@@ -318,4 +409,20 @@ export async function deleteTemplate(
   revalidatePath("/settings");
   revalidatePath("/", "layout");
   return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Backfill existing mass_times to templates (admin utility)
+// ---------------------------------------------------------------------------
+
+export async function runBackfill(): Promise<{ success: boolean; linked?: number; error?: string }> {
+  const supabase = await createClient();
+  const { data: parish, error: pError } = await supabase.from("parish").select("id").single();
+  if (pError) return { success: false, error: pError.message };
+
+  const adminClient = createAdminClient();
+  const linked = await backfillTemplateLinks(adminClient, parish.id);
+
+  revalidatePath("/", "layout");
+  return { success: true, linked };
 }

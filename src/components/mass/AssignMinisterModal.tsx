@@ -4,8 +4,8 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { fullName } from "@/lib/utils";
-import { createAssignment, deleteAssignment } from "@/lib/actions";
-import { ROLE_LABELS } from "@/types";
+import { createAssignment, createMultipleAssignments, deleteAssignment } from "@/lib/actions";
+import { ROLE_LABELS, MULTI_SLOT_ROLES } from "@/types";
 import type { Minister, MinisterRole, Assignment } from "@/types";
 
 interface AssignMinisterModalProps {
@@ -14,20 +14,10 @@ interface AssignMinisterModalProps {
   massTimeId: string;
   role: MinisterRole;
   existingAssignment?: Assignment & { minister: Minister };
-  /** Ministers already qualified for this role */
   eligibleMinisters: Minister[];
-  /**
-   * Quick-assign mode: clicking a minister name immediately assigns without
-   * a separate confirm step. Used for unfilled/empty slots.
-   */
   quickMode?: boolean;
 }
 
-/**
- * Modal dialog for assigning or replacing a minister in a role slot.
- * Handles both creation (no existing) and replacement (delete + create).
- * In quickMode (unfilled slots), clicking a minister assigns them instantly.
- */
 export function AssignMinisterModal({
   isOpen,
   onClose,
@@ -40,12 +30,24 @@ export function AssignMinisterModal({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [selectedMinisterId, setSelectedMinisterId] = useState<string>("");
+  const [selectedMinisterIds, setSelectedMinisterIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  /** Assign the given minister (or the selected one in standard mode). */
-  const handleAssign = (ministerId?: string) => {
+  const isMultiSlot = MULTI_SLOT_ROLES.includes(role);
+  const isQuickMode = quickMode && !existingAssignment;
+
+  const toggleMinister = (id: string) => {
+    setSelectedMinisterIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleAssignSingle = (ministerId?: string) => {
     const id = ministerId ?? selectedMinisterId;
     if (!id) {
       setError("Please select a minister.");
@@ -54,18 +56,36 @@ export function AssignMinisterModal({
     setError(null);
 
     startTransition(async () => {
-      // Replace existing assignment if present
       if (existingAssignment) {
         await deleteAssignment(existingAssignment.id);
       }
-
       const result = await createAssignment(massTimeId, id, role);
-
       if (!result.success) {
         setError(result.error ?? "Failed to assign minister");
         return;
       }
+      router.refresh();
+      onClose();
+    });
+  };
 
+  const handleAssignMultiple = () => {
+    if (selectedMinisterIds.size === 0) {
+      setError("Please select at least one minister.");
+      return;
+    }
+    setError(null);
+
+    startTransition(async () => {
+      const result = await createMultipleAssignments(
+        massTimeId,
+        Array.from(selectedMinisterIds),
+        role,
+      );
+      if (!result.success) {
+        setError(result.error ?? "Failed to assign ministers");
+        return;
+      }
       router.refresh();
       onClose();
     });
@@ -80,10 +100,13 @@ export function AssignMinisterModal({
     });
   };
 
-  const isQuickMode = quickMode && !existingAssignment;
+  const subtitle = isMultiSlot
+    ? "Select one or more ministers to assign"
+    : isQuickMode
+    ? "Tap a name to assign immediately"
+    : undefined;
 
   return (
-    /* Backdrop */
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
@@ -93,10 +116,10 @@ export function AssignMinisterModal({
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
           <div>
             <h2 className="font-bold text-slate-800 text-base">
-              {isQuickMode ? "Quick Assign" : "Assign"} {ROLE_LABELS[role]}
+              {isMultiSlot || isQuickMode ? "Quick Assign" : "Assign"} — {ROLE_LABELS[role]}
             </h2>
-            {isQuickMode && (
-              <p className="text-xs text-slate-400 mt-0.5">Tap a name to assign immediately</p>
+            {subtitle && (
+              <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>
             )}
           </div>
           <button
@@ -111,7 +134,6 @@ export function AssignMinisterModal({
 
         {/* Body */}
         <div className="p-5 space-y-4">
-          {/* Current assignment note (replace scenario) */}
           {existingAssignment && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700">
               Currently assigned: <strong>{fullName(existingAssignment.minister)}</strong>
@@ -120,9 +142,8 @@ export function AssignMinisterModal({
             </div>
           )}
 
-          {/* Minister list */}
           <div>
-            {!isQuickMode && (
+            {!isQuickMode && !isMultiSlot && (
               <label className="block text-sm font-medium text-slate-700 mb-1.5">
                 Select Minister
               </label>
@@ -131,14 +152,40 @@ export function AssignMinisterModal({
               <p className="text-sm text-slate-400 italic">
                 No active ministers are qualified for this role.
               </p>
+            ) : isMultiSlot ? (
+              /* Multi-select: checkboxes */
+              <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
+                {eligibleMinisters.map((m) => (
+                  <label
+                    key={m.id}
+                    className={cn(
+                      "flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors",
+                      selectedMinisterIds.has(m.id) && "bg-teal-50"
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedMinisterIds.has(m.id)}
+                      onChange={() => toggleMinister(m.id)}
+                      className="accent-teal-700 h-4 w-4 rounded"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">{fullName(m)}</p>
+                      {m.email && (
+                        <p className="text-xs text-slate-400">{m.email}</p>
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
             ) : isQuickMode ? (
-              /* Quick-assign: one tap per minister */
+              /* Single-slot quick: tap to assign immediately */
               <div className="max-h-64 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
                 {eligibleMinisters.map((m) => (
                   <button
                     key={m.id}
                     disabled={isPending}
-                    onClick={() => handleAssign(m.id)}
+                    onClick={() => handleAssignSingle(m.id)}
                     className="flex items-center justify-between w-full px-3 py-3 text-left transition-colors disabled:opacity-50 hover:bg-teal-50"
                   >
                     <div>
@@ -154,7 +201,7 @@ export function AssignMinisterModal({
                 ))}
               </div>
             ) : (
-              /* Standard: radio select + explicit Assign button */
+              /* Single-slot standard: radio buttons + Assign button */
               <div className="max-h-52 overflow-y-auto rounded-lg border border-slate-200 divide-y divide-slate-100">
                 {eligibleMinisters.map((m) => (
                   <label
@@ -190,8 +237,8 @@ export function AssignMinisterModal({
         </div>
 
         {/* Footer */}
-        {isQuickMode ? (
-          /* Quick-mode: just a cancel link */
+        {isQuickMode && !isMultiSlot ? (
+          /* Single-slot quick mode: just cancel */
           <div className="border-t border-slate-100 px-5 py-3 text-center">
             <button
               onClick={onClose}
@@ -200,8 +247,33 @@ export function AssignMinisterModal({
               Cancel
             </button>
           </div>
+        ) : isMultiSlot ? (
+          /* Multi-select: cancel + assign */
+          <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-4">
+            <button
+              onClick={onClose}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleAssignMultiple}
+              disabled={isPending || selectedMinisterIds.size === 0}
+              className={cn(
+                "rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white",
+                "hover:bg-teal-600 transition-colors",
+                (isPending || selectedMinisterIds.size === 0) && "opacity-60 cursor-not-allowed"
+              )}
+            >
+              {isPending
+                ? "Saving…"
+                : selectedMinisterIds.size > 1
+                ? `Assign ${selectedMinisterIds.size} Ministers`
+                : "Assign"}
+            </button>
+          </div>
         ) : (
-          /* Standard mode: remove + cancel + assign buttons */
+          /* Single-slot standard: remove + cancel + assign */
           <div className="flex items-center justify-between border-t border-slate-100 px-5 py-4">
             <div>
               {existingAssignment && (
@@ -214,7 +286,6 @@ export function AssignMinisterModal({
                 </button>
               )}
             </div>
-
             <div className="flex items-center gap-2">
               <button
                 onClick={onClose}
@@ -223,7 +294,7 @@ export function AssignMinisterModal({
                 Cancel
               </button>
               <button
-                onClick={() => handleAssign()}
+                onClick={() => handleAssignSingle()}
                 disabled={isPending || eligibleMinisters.length === 0}
                 className={cn(
                   "rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white",

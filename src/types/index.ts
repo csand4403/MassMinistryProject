@@ -102,15 +102,56 @@ export const PRIEST_TYPE_LABELS: Record<PriestType, string> = {
 
 // ---------------------------------------------------------------------------
 // Mass day type (for templates)
+// UI-facing values; per-weekday types map to day_type='WEEKDAY' + day_of_week in DB.
 // ---------------------------------------------------------------------------
-export type MassDayType = "SUNDAY" | "WEEKDAY" | "HOLY_DAY" | "SCHOOL_MASS";
+export type MassDayType =
+  | "SUNDAY"
+  | "SATURDAY"
+  | "MONDAY"
+  | "TUESDAY"
+  | "WEDNESDAY"
+  | "THURSDAY"
+  | "FRIDAY"
+  | "HOLY_DAY"
+  | "SCHOOL_MASS";
 
 export const DAY_TYPE_LABELS: Record<MassDayType, string> = {
   SUNDAY:      "Sunday",
-  WEEKDAY:     "Weekday",
+  SATURDAY:    "Saturday",
+  MONDAY:      "Monday",
+  TUESDAY:     "Tuesday",
+  WEDNESDAY:   "Wednesday",
+  THURSDAY:    "Thursday",
+  FRIDAY:      "Friday",
   HOLY_DAY:    "Holy Day",
   SCHOOL_MASS: "School Mass",
 };
+
+// Maps UI MassDayType → { db_day_type, day_of_week } stored in mass_template.
+export const DAY_TYPE_TO_DB: Record<MassDayType, { day_type: string; day_of_week: number | null }> = {
+  SUNDAY:      { day_type: "SUNDAY",    day_of_week: null },
+  SATURDAY:    { day_type: "WEEKDAY",   day_of_week: 6 },
+  MONDAY:      { day_type: "WEEKDAY",   day_of_week: 1 },
+  TUESDAY:     { day_type: "WEEKDAY",   day_of_week: 2 },
+  WEDNESDAY:   { day_type: "WEEKDAY",   day_of_week: 3 },
+  THURSDAY:    { day_type: "WEEKDAY",   day_of_week: 4 },
+  FRIDAY:      { day_type: "WEEKDAY",   day_of_week: 5 },
+  HOLY_DAY:    { day_type: "HOLY_DAY",  day_of_week: null },
+  SCHOOL_MASS: { day_type: "SCHOOL_MASS", day_of_week: null },
+};
+
+// Reverse: reconstruct UI MassDayType from DB values.
+export function dbToMassDayType(dbDayType: string, dbDayOfWeek: number | null): MassDayType {
+  if (dbDayType === "SUNDAY") return "SUNDAY";
+  if (dbDayType === "HOLY_DAY") return "HOLY_DAY";
+  if (dbDayType === "SCHOOL_MASS") return "SCHOOL_MASS";
+  // WEEKDAY — use day_of_week
+  const map: Record<number, MassDayType> = {
+    1: "MONDAY", 2: "TUESDAY", 3: "WEDNESDAY",
+    4: "THURSDAY", 5: "FRIDAY", 6: "SATURDAY",
+  };
+  return (dbDayOfWeek !== null && map[dbDayOfWeek]) ? map[dbDayOfWeek] : "MONDAY";
+}
 
 // ---------------------------------------------------------------------------
 // Liturgical Season
@@ -247,7 +288,8 @@ export interface MassTemplate {
   id: string;
   parish_id: string;
   name: string;
-  day_type: MassDayType;
+  day_type: string;       // raw DB value: SUNDAY | WEEKDAY | HOLY_DAY | SCHOOL_MASS
+  day_of_week: number | null;  // 0–6; combined with day_type for per-weekday specificity
   start_time: string;
   language: MassLanguage;
   notes: string | null;
