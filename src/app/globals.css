@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  html {
+    background-color: #f8f7f5;
+    @apply text-slate-900 antialiased;
+  }
+
+  /* Smooth scrolling for the whole app */
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer components {
+  /* Parish-branded card */
+  .parish-card {
+    @apply rounded-xl bg-white shadow-sm ring-1 ring-slate-200;
+  }
+
+  /* Section header with left accent bar */
+  .section-header {
+    @apply flex items-center gap-2 text-sm font-semibold uppercase tracking-widest text-slate-500;
+  }
+
+  /* Keyboard-friendly focus ring */
+  .focus-ring {
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-navy-600 focus-visible:ring-offset-2;
+  }
+}

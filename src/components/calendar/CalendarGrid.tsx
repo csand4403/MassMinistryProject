@@ -1,0 +1,111 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
+import { getDayOfMonth } from "@/lib/utils";
+import { STATUS_DOT_CLASSES, STATUS_LABELS } from "@/lib/staffing";
+import type { CalendarDayStatus } from "@/types";
+import { startOfMonth, getDay } from "date-fns";
+
+const DAY_HEADERS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+interface CalendarGridProps {
+  year: number;
+  month: number; // 1-based
+  days: CalendarDayStatus[];
+}
+
+export function CalendarGrid({ year, month, days }: CalendarGridProps) {
+  const router = useRouter();
+
+  const monthStart = startOfMonth(new Date(year, month - 1, 1));
+  // Sunday = 0 in date-fns getDay
+  const startPadding = getDay(monthStart);
+
+  const handleDayClick = (day: CalendarDayStatus) => {
+    if (!day.is_sunday && !day.is_feast_or_holy_day) return;
+    router.push(`/mass/${day.date}`);
+  };
+
+  return (
+    <div className="parish-card overflow-hidden">
+      {/* Day-of-week headers */}
+      <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50">
+        {DAY_HEADERS.map((d) => (
+          <div
+            key={d}
+            className="py-2 text-center text-xs font-semibold uppercase tracking-wider text-slate-500"
+          >
+            {d}
+          </div>
+        ))}
+      </div>
+
+      {/* Calendar grid */}
+      <div className="grid grid-cols-7">
+        {/* Leading blank cells for alignment */}
+        {Array.from({ length: startPadding }).map((_, i) => (
+          <div key={`pad-${i}`} className="h-20 border-b border-r border-slate-100 bg-slate-50/50" />
+        ))}
+
+        {days.map((day) => {
+          const dayNum = getDayOfMonth(day.date);
+          const isActive = day.is_sunday || day.is_feast_or_holy_day;
+          const isHolyDay = day.is_feast_or_holy_day;
+
+          return (
+            <div
+              key={day.date}
+              onClick={() => handleDayClick(day)}
+              className={cn(
+                "h-20 border-b border-r border-slate-100 p-1.5 flex flex-col",
+                isActive && "cursor-pointer",
+                isActive && !isHolyDay && "hover:bg-navy-50 transition-colors",
+                isHolyDay && "bg-parish-50 hover:bg-parish-100 transition-colors",
+                !isActive && "bg-slate-50/50 opacity-50"
+              )}
+            >
+              {/* Day number */}
+              <span
+                className={cn(
+                  "text-sm font-semibold self-start leading-none",
+                  day.is_sunday ? "text-navy-800" : "text-slate-600",
+                  !isActive && "text-slate-400"
+                )}
+              >
+                {dayNum}
+              </span>
+
+              {/* Feast name (truncated) */}
+              {day.feast_name && (
+                <span className="mt-0.5 text-[10px] leading-tight text-parish-700 font-medium line-clamp-2">
+                  {day.feast_name}
+                </span>
+              )}
+
+              {/* HOD badge */}
+              {day.is_holy_day_of_obligation && (
+                <span className="mt-auto text-[9px] font-bold uppercase tracking-wide text-parish-600">
+                  HOD
+                </span>
+              )}
+
+              {/* Staffing status dot — color alone communicates status */}
+              {isActive && day.status && (
+                <div className="mt-auto flex items-center">
+                  <span
+                    className={cn(
+                      "inline-block h-2 w-2 rounded-full flex-shrink-0",
+                      STATUS_DOT_CLASSES[day.status]
+                    )}
+                    title={STATUS_LABELS[day.status]}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
