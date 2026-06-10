@@ -4,16 +4,19 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { createMinister, updateMinister } from "@/lib/actions";
-import { ROLE_LABELS } from "@/types";
-import type { Minister, MinisterRole } from "@/types";
+import { ROLE_LABELS, ROLE_DISPLAY_ORDER, PRIEST_TYPE_LABELS } from "@/types";
+import type { Minister, MinisterRole, PriestType } from "@/types";
 
-const ALL_ROLES: MinisterRole[] = [
-  "CELEBRANT", "DEACON", "LECTOR",
-  "PSALMIST", "EMHC", "USHER", "SECURITY",
+const ALL_ROLES: MinisterRole[] = ROLE_DISPLAY_ORDER;
+
+const PRIEST_TYPE_OPTIONS: PriestType[] = [
+  "PASTOR_ON_STAFF",
+  "ASSOCIATE_ON_STAFF",
+  "VISITING_CELEBRANT",
 ];
 
 interface MinisterFormProps {
-  minister?: Minister; // undefined = create mode
+  minister?: Minister;
 }
 
 export function MinisterForm({ minister }: MinisterFormProps) {
@@ -33,6 +36,23 @@ export function MinisterForm({ minister }: MinisterFormProps) {
   );
   const [notes, setNotes] = useState(minister?.notes ?? "");
   const [isActive, setIsActive] = useState(minister?.is_active ?? true);
+
+  // Priest-specific fields
+  const [priestType, setPriestType] = useState<PriestType | "">(
+    minister?.priest_type ?? ""
+  );
+  const [diocese, setDiocese] = useState(
+    minister?.minister_diocese ?? "Diocese of Dallas"
+  );
+  const [letterOnFile, setLetterOnFile] = useState(
+    minister?.letter_of_suitability ?? false
+  );
+  const [letterExpiry, setLetterExpiry] = useState(
+    minister?.letter_expiration_date ?? ""
+  );
+
+  const isCelebrant = selectedRoles.includes("CELEBRANT");
+  const isDallaDiocese = diocese.trim() === "Diocese of Dallas" || diocese.trim() === "";
 
   const toggleRole = (role: MinisterRole) => {
     setSelectedRoles((prev) =>
@@ -54,6 +74,20 @@ export function MinisterForm({ minister }: MinisterFormProps) {
     }
 
     startTransition(async () => {
+      const priestFields = isCelebrant && priestType
+        ? {
+            priest_type: priestType as PriestType,
+            minister_diocese: diocese.trim() || "Diocese of Dallas",
+            letter_of_suitability: letterOnFile,
+            letter_expiration_date: (!isDallaDiocese && letterExpiry) ? letterExpiry : undefined,
+          }
+        : {
+            priest_type: undefined as PriestType | undefined,
+            minister_diocese: undefined as string | undefined,
+            letter_of_suitability: false,
+            letter_expiration_date: undefined as string | undefined,
+          };
+
       if (minister) {
         const result = await updateMinister(minister.id, {
           first_name: firstName.trim(),
@@ -64,6 +98,7 @@ export function MinisterForm({ minister }: MinisterFormProps) {
           roles: selectedRoles,
           notes: notes.trim() || undefined,
           is_active: isActive,
+          ...priestFields,
         });
         if (!result.success) {
           setError(result.error ?? "Failed to update minister");
@@ -79,6 +114,7 @@ export function MinisterForm({ minister }: MinisterFormProps) {
           notification_preference: notifPref,
           roles: selectedRoles,
           notes: notes.trim() || undefined,
+          ...priestFields,
         });
         if (!result.success) {
           setError(result.error ?? "Failed to create minister");
@@ -177,6 +213,71 @@ export function MinisterForm({ minister }: MinisterFormProps) {
           })}
         </div>
       </Field>
+
+      {/* Priest-specific fields — shown only when CELEBRANT role selected */}
+      {isCelebrant && (
+        <div className="rounded-xl border border-sky-100 bg-sky-50/50 p-4 space-y-4">
+          <h3 className="text-sm font-semibold text-sky-800">Priest Details</h3>
+
+          <Field label="Priest Type">
+            <select
+              value={priestType}
+              onChange={(e) => setPriestType(e.target.value as PriestType | "")}
+              className={inputClass}
+            >
+              <option value="">— Select type —</option>
+              {PRIEST_TYPE_OPTIONS.map((pt) => (
+                <option key={pt} value={pt}>{PRIEST_TYPE_LABELS[pt]}</option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Diocese">
+            <input
+              type="text"
+              value={diocese}
+              onChange={(e) => setDiocese(e.target.value)}
+              placeholder="Diocese of Dallas"
+              className={inputClass}
+            />
+          </Field>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={letterOnFile}
+              onClick={() => setLetterOnFile((v) => !v)}
+              className={cn(
+                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-navy-600",
+                letterOnFile ? "bg-green-600" : "bg-slate-300"
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+                  letterOnFile ? "translate-x-6" : "translate-x-1"
+                )}
+              />
+            </button>
+            <span className="text-sm text-slate-600">
+              Letter of Suitability on file
+            </span>
+          </div>
+
+          {/* Expiry date — only relevant for non-Dallas-diocese visiting celebrants */}
+          {priestType === "VISITING_CELEBRANT" && !isDallaDiocese && (
+            <Field label="Letter Expiration Date">
+              <input
+                type="date"
+                value={letterExpiry}
+                onChange={(e) => setLetterExpiry(e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+          )}
+        </div>
+      )}
 
       {/* Notes */}
       <Field label="Notes">

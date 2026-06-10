@@ -10,7 +10,7 @@ import {
 import { RoleSectionWithAssign } from "@/components/mass/RoleSectionWithAssign";
 import { FeastBanner } from "@/components/mass/FeastBanner";
 import { formatDate } from "@/lib/utils";
-import { ROLE_DISPLAY_ORDER } from "@/types";
+import { ROLE_DISPLAY_ORDER, LANGUAGE_LABELS } from "@/types";
 import {
   STATUS_BADGE_CLASSES,
   STATUS_DOT_CLASSES,
@@ -97,21 +97,29 @@ export default async function MassDetailPage({ params }: PageProps) {
             <p className="text-sm text-slate-500 mt-0.5">{formatDate(date)}</p>
           </div>
 
-          {/* Staffing status */}
-          <span
-            className={cn(
-              "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold ring-1",
-              STATUS_BADGE_CLASSES[staffing_status]
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Language badge */}
+            {massTime.language && (
+              <span className="rounded-full px-3 py-1.5 text-sm font-medium bg-sky-50 text-sky-700 ring-1 ring-sky-200">
+                {LANGUAGE_LABELS[massTime.language]}
+              </span>
             )}
-          >
+            {/* Staffing status */}
             <span
               className={cn(
-                "h-2 w-2 rounded-full",
-                STATUS_DOT_CLASSES[staffing_status]
+                "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold ring-1",
+                STATUS_BADGE_CLASSES[staffing_status]
               )}
-            />
-            {STATUS_LABELS[staffing_status]}
-          </span>
+            >
+              <span
+                className={cn(
+                  "h-2 w-2 rounded-full",
+                  STATUS_DOT_CLASSES[staffing_status]
+                )}
+              />
+              {STATUS_LABELS[staffing_status]}
+            </span>
+          </div>
         </div>
 
         {/* Check-in progress bar */}

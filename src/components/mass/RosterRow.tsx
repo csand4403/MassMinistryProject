@@ -22,15 +22,22 @@ const STATUS_LABELS = {
   ABSENT:     "Absent",
 } as const;
 
-/**
- * A single row in the Mass Detail roster.
- * Shows the minister's name, current status, reading label (for lectors),
- * and the check-in toggle button.
- */
+function celebrantWarning(minister: Minister): string | null {
+  if (minister.priest_type !== "VISITING_CELEBRANT") return null;
+  if (!minister.letter_of_suitability) return "Letter of Suitability not on file";
+  const isDallaDiocese = !minister.minister_diocese || minister.minister_diocese === "Diocese of Dallas";
+  if (!isDallaDiocese && minister.letter_expiration_date) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (minister.letter_expiration_date < today) return "Letter of Suitability expired";
+  }
+  return null;
+}
+
 export function RosterRow({ assignment, checkIn }: RosterRowProps) {
   const { minister, status } = assignment;
   const isCheckedIn = status === "CHECKED_IN" || !!checkIn;
   const name = fullName(minister);
+  const warning = celebrantWarning(minister);
 
   return (
     <div
@@ -39,11 +46,21 @@ export function RosterRow({ assignment, checkIn }: RosterRowProps) {
         isCheckedIn ? "bg-green-50" : "bg-white hover:bg-slate-50"
       )}
     >
-      {/* Minister name */}
+      {/* Minister name + celebrant warning */}
       <div className="flex-1 min-w-0">
-        <span className={cn("text-sm", STATUS_CLASSES[status])}>
-          {name}
-        </span>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={cn("text-sm", STATUS_CLASSES[status])}>{name}</span>
+          {minister.priest_type === "VISITING_CELEBRANT" && (
+            <span className="text-[10px] rounded px-1.5 py-0.5 bg-sky-50 text-sky-700 ring-1 ring-sky-200 font-medium">
+              Visiting
+            </span>
+          )}
+          {warning && (
+            <span className="text-[10px] rounded px-1.5 py-0.5 bg-orange-50 text-orange-700 ring-1 ring-orange-300 font-medium flex items-center gap-1">
+              ⚑ {warning}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Status badge */}

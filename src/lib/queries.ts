@@ -1,6 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase query helpers
-// All data access goes through these functions to keep components clean.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -15,6 +14,10 @@ import type {
   CalendarDayStatus,
   StaffingStatus,
   StaffingAlert,
+  CelebrantAlert,
+  MassTemplate,
+  MassTemplateRoleConfig,
+  MassLanguage,
 } from "@/types";
 import { computeStaffingStatus, computeDayStatus, normalizeRole } from "./staffing";
 import {
@@ -30,10 +33,6 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * The legacy DB enum uses LECTOR_1/LECTOR_2; the app models both as LECTOR.
- * Normalize DB assignments before they reach any UI or logic layer.
- */
 function normalizeAssignment<T extends { role: string }>(a: T): T {
   if (a.role === "LECTOR_1" || a.role === "LECTOR_2") {
     return { ...a, role: "LECTOR" };
@@ -41,11 +40,23 @@ function normalizeAssignment<T extends { role: string }>(a: T): T {
   return a;
 }
 
+function normalizeMinisterRoles<T extends { roles: string[] }>(m: T): T {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const r of m.roles) {
+    const normalized = normalizeRole(r);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      deduped.push(normalized);
+    }
+  }
+  return { ...m, roles: deduped as T["roles"] };
+}
+
 // ---------------------------------------------------------------------------
 // Parish
 // ---------------------------------------------------------------------------
 
-/** Always returns the first (and only) parish record. */
 export async function getParish(supabase: SupabaseClient) {
   const { data, error } = await supabase
     .from("parish")
@@ -59,15 +70,10 @@ export async function getParish(supabase: SupabaseClient) {
 // Calendar
 // ---------------------------------------------------------------------------
 
-/**
- * Build the calendar grid data for a given month.
- * Returns one CalendarDayStatus entry per day in the month.
- * Sundays and feast days are "active" cells; all others are empty.
- */
 export async function getCalendarMonth(
   supabase: SupabaseClient,
   year: number,
-  month: number  // 1-based
+  month: number
 ): Promise<CalendarDayStatus[]> {
   const monthStart = startOfMonth(new Date(year, month - 1, 1));
   const monthEnd = endOfMonth(monthStart);
@@ -75,7 +81,6 @@ export async function getCalendarMonth(
   const startStr = format(monthStart, "yyyy-MM-dd");
   const endStr = format(monthEnd, "yyyy-MM-dd");
 
-  // Fetch all liturgical dates for the month
   const { data: litDates, error: ldError } = await supabase
     .from("liturgical_date")
     .select("id, date, season, is_high_feast, is_holy_day_of_obligation, feast_name")
@@ -83,31 +88,63 @@ export async function getCalendarMonth(
     .lte("date", endStr);
   if (ldError) throw ldError;
 
-  // Build a map of date string → liturgical_date row
   const litDateMap = new Map<string, typeof litDates[0]>(
     (litDates ?? []).map((ld) => [ld.date, ld])
   );
 
-  // For each liturgical date, fetch mass times and compute status
   const statusMap = new Map<string, StaffingStatus>();
+  const languageMap = new Map<string, MassLanguage[]>(); // date → languages
 
   if (litDates && litDates.length > 0) {
     const litDateIds = litDates.map((ld) => ld.id);
 
-    const { data: massTimes, error: mtError } = await supabase
-      .from("mass_time")
-      .select("id, liturgical_date_id")
-      .in("liturgical_date_id", litDateIds);
-    if (mtError) throw mtError;
+    // Try to fetch with Phase 2A columns (template_id, language).
+    // Falls back to base columns if migration hasn't been applied yet.
+    let massTimes: { id: string; liturgical_date_id: string; template_id?: string | null; language?: string | null }[] | null = null;
+    {
+      const { data, error } = await supabase
+        .from("mass_time")
+        .select("id, liturgical_date_id, template_id, language")
+        .in("liturgical_date_id", litDateIds);
+      if (!error) {
+        massTimes = data;
+      } else {
+        // Migration not yet applied — fall back to base columns
+        const { data: fallback, error: fbError } = await supabase
+          .from("mass_time")
+          .select("id, liturgical_date_id")
+          .in("liturgical_date_id", litDateIds);
+        if (fbError) throw fbError;
+        massTimes = fallback;
+      }
+    }
 
     if (massTimes && massTimes.length > 0) {
       const massTimeIds = massTimes.map((mt) => mt.id);
 
+      // Fetch assignments
       const { data: assignments, error: aError } = await supabase
         .from("assignment")
         .select("mass_time_id, role, status")
         .in("mass_time_id", massTimeIds);
       if (aError) throw aError;
+
+      // Fetch template role configs for linked templates (Phase 2A)
+      const templateIds = Array.from(new Set(
+        massTimes.filter((mt) => mt.template_id).map((mt) => mt.template_id as string)
+      ));
+
+      const templateRoleMap = new Map<string, Pick<MassTemplateRoleConfig, "role" | "min_count">[]>();
+      if (templateIds.length > 0) {
+        const { data: roleConfigs } = await supabase
+          .from("mass_template_role")
+          .select("template_id, role, min_count")
+          .in("template_id", templateIds);
+        for (const rc of roleConfigs ?? []) {
+          if (!templateRoleMap.has(rc.template_id)) templateRoleMap.set(rc.template_id, []);
+          templateRoleMap.get(rc.template_id)!.push({ role: rc.role, min_count: rc.min_count });
+        }
+      }
 
       // Group assignments by mass_time_id
       const assignByMass = new Map<string, typeof assignments>();
@@ -119,27 +156,36 @@ export async function getCalendarMonth(
       }
 
       // Group mass times by liturgical_date_id
-      const massTimesByDate = new Map<string, string[]>();
+      const massTimesByDate = new Map<string, typeof massTimes>();
       for (const mt of massTimes) {
         if (!massTimesByDate.has(mt.liturgical_date_id)) {
           massTimesByDate.set(mt.liturgical_date_id, []);
         }
-        massTimesByDate.get(mt.liturgical_date_id)!.push(mt.id);
+        massTimesByDate.get(mt.liturgical_date_id)!.push(mt);
       }
 
-      // Compute status per liturgical date
       for (const ld of litDates) {
-        const mtIds = massTimesByDate.get(ld.id) ?? [];
-        const massStatuses: StaffingStatus[] = mtIds.map((mtId) => {
-          const asgns = assignByMass.get(mtId) ?? [];
-          return computeStaffingStatus(asgns as any);
+        const mts = massTimesByDate.get(ld.id) ?? [];
+
+        // Collect languages for this date
+        const langs: MassLanguage[] = [];
+        for (const mt of mts) {
+          if (mt.language && !langs.includes(mt.language as MassLanguage)) {
+            langs.push(mt.language as MassLanguage);
+          }
+        }
+        if (langs.length > 0) languageMap.set(ld.date, langs);
+
+        const massStatuses: StaffingStatus[] = mts.map((mt) => {
+          const asgns = assignByMass.get(mt.id) ?? [];
+          const templateRoles = mt.template_id ? templateRoleMap.get(mt.template_id) : undefined;
+          return computeStaffingStatus(asgns as any, templateRoles);
         });
         statusMap.set(ld.date, computeDayStatus(massStatuses));
       }
     }
   }
 
-  // Generate every day of the month
   const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
 
   return days.map((day) => {
@@ -157,6 +203,7 @@ export async function getCalendarMonth(
       is_holy_day_of_obligation: litDate?.is_holy_day_of_obligation ?? false,
       season: litDate?.season ?? null,
       status: isActive ? (statusMap.get(dateStr) ?? "RED") : null,
+      languages: isActive ? (languageMap.get(dateStr) ?? []) : [],
     };
   });
 }
@@ -167,7 +214,7 @@ export async function getCalendarMonth(
 
 export async function getLiturgicalDate(
   supabase: SupabaseClient,
-  date: string  // "YYYY-MM-DD"
+  date: string
 ): Promise<LiturgicalDate | null> {
   const { data, error } = await supabase
     .from("liturgical_date")
@@ -178,10 +225,6 @@ export async function getLiturgicalDate(
   return data;
 }
 
-/**
- * Get a liturgical date with all mass times and their full rosters.
- * This is the main query for the Mass Day View.
- */
 export async function getLiturgicalDateWithMasses(
   supabase: SupabaseClient,
   date: string
@@ -190,7 +233,6 @@ export async function getLiturgicalDateWithMasses(
   if (!litDate) return null;
 
   const massTimes = await getMassTimesWithRosters(supabase, litDate.id);
-
   const overallStatus = computeDayStatus(massTimes.map((mt) => mt.staffing_status));
 
   return {
@@ -214,20 +256,34 @@ export async function getMassTimesWithRosters(
     .eq("liturgical_date_id", liturgicalDateId)
     .order("sort_order");
   if (mtError) throw mtError;
-
   if (!massTimes || massTimes.length === 0) return [];
 
   const massTimeIds = massTimes.map((mt: MassTime) => mt.id);
 
-  // Fetch all assignments with minister details in one query
   const { data: assignments, error: aError } = await supabase
     .from("assignment")
-    .select(`
-      *,
-      minister (*)
-    `)
+    .select(`*, minister (*)`)
     .in("mass_time_id", massTimeIds);
   if (aError) throw aError;
+
+  // Fetch templates for linked mass times
+  const templateIds = Array.from(new Set(
+    massTimes.filter((mt: MassTime) => mt.template_id).map((mt: MassTime) => mt.template_id as string)
+  ));
+
+  const templateMap = new Map<string, MassTemplate>();
+  if (templateIds.length > 0) {
+    const { data: templates } = await supabase
+      .from("mass_template")
+      .select("*, mass_template_role(*)")
+      .in("id", templateIds);
+    for (const t of templates ?? []) {
+      templateMap.set(t.id, {
+        ...t,
+        role_configs: t.mass_template_role ?? [],
+      });
+    }
+  }
 
   const assignByMass = new Map<string, (Assignment & { minister: Minister })[]>();
   for (const mt of massTimes) {
@@ -239,10 +295,16 @@ export async function getMassTimesWithRosters(
 
   return massTimes.map((mt: MassTime) => {
     const mtAssignments = (assignByMass.get(mt.id) ?? []).map(normalizeAssignment);
+    const template = mt.template_id ? templateMap.get(mt.template_id) ?? null : null;
+    const templateRoles = template?.role_configs?.map((rc) => ({
+      role: rc.role,
+      min_count: rc.min_count,
+    }));
     return {
       ...mt,
       assignments: mtAssignments,
-      staffing_status: computeStaffingStatus(mtAssignments),
+      staffing_status: computeStaffingStatus(mtAssignments, templateRoles),
+      template,
     };
   });
 }
@@ -265,10 +327,27 @@ export async function getMassTimeWithRoster(
   if (aError) throw aError;
 
   const normalized = (assignments ?? []).map(normalizeAssignment);
+
+  let template: MassTemplate | null = null;
+  if (mt.template_id) {
+    const { data: tmpl } = await supabase
+      .from("mass_template")
+      .select("*, mass_template_role(*)")
+      .eq("id", mt.template_id)
+      .single();
+    if (tmpl) template = { ...tmpl, role_configs: tmpl.mass_template_role ?? [] };
+  }
+
+  const templateRoles = template?.role_configs?.map((rc) => ({
+    role: rc.role,
+    min_count: rc.min_count,
+  }));
+
   return {
     ...mt,
     assignments: normalized,
-    staffing_status: computeStaffingStatus(normalized),
+    staffing_status: computeStaffingStatus(normalized, templateRoles),
+    template,
   };
 }
 
@@ -300,26 +379,10 @@ export async function getMinister(
   return data ? normalizeMinisterRoles(data) : null;
 }
 
-function normalizeMinisterRoles<T extends { roles: string[] }>(m: T): T {
-  const seen = new Set<string>();
-  const deduped: string[] = [];
-  for (const r of m.roles) {
-    const normalized = normalizeRole(r);
-    if (!seen.has(normalized)) {
-      seen.add(normalized);
-      deduped.push(normalized);
-    }
-  }
-  return { ...m, roles: deduped as T["roles"] };
-}
-
-/** Ministers qualified for a specific role */
 export async function getMinistersForRole(
   supabase: SupabaseClient,
   role: string
 ): Promise<Minister[]> {
-  // The DB enum uses LECTOR_1/LECTOR_2 for the unified LECTOR role.
-  // Querying with "LECTOR" directly causes a 22P02 enum cast error.
   if (role === "LECTOR") {
     const { data, error } = await supabase
       .from("minister")
@@ -345,16 +408,41 @@ export async function getMinistersForRole(
 }
 
 // ---------------------------------------------------------------------------
-// Upcoming staffing alerts — used for the dashboard banner
+// Mass Templates
 // ---------------------------------------------------------------------------
 
-/**
- * Returns upcoming Mass times (next 4 weeks) with RED or YELLOW staffing status.
- * RED (missing Priest) entries sort first, then chronologically.
- */
+export async function getTemplates(supabase: SupabaseClient): Promise<MassTemplate[]> {
+  const { data, error } = await supabase
+    .from("mass_template")
+    .select("*, mass_template_role(*)")
+    .order("day_type")
+    .order("start_time");
+  // Table may not exist if migration hasn't run yet
+  if (error) return [];
+  return (data ?? []).map((t) => ({ ...t, role_configs: t.mass_template_role ?? [] }));
+}
+
+export async function getTemplate(
+  supabase: SupabaseClient,
+  id: string
+): Promise<MassTemplate | null> {
+  const { data, error } = await supabase
+    .from("mass_template")
+    .select("*, mass_template_role(*)")
+    .eq("id", id)
+    .single();
+  if (error) return null;
+  if (!data) return null;
+  return { ...data, role_configs: data.mass_template_role ?? [] };
+}
+
+// ---------------------------------------------------------------------------
+// Upcoming staffing alerts — dashboard banner
+// ---------------------------------------------------------------------------
+
 export async function getUpcomingAlerts(
   supabase: SupabaseClient
-): Promise<StaffingAlert[]> {
+): Promise<{ staffing: StaffingAlert[]; celebrant: CelebrantAlert[] }> {
   const today = new Date();
   const lookAhead = addDays(today, 28);
 
@@ -367,28 +455,70 @@ export async function getUpcomingAlerts(
     .gte("date", startStr)
     .lte("date", endStr);
   if (ldError) throw ldError;
-  if (!litDates || litDates.length === 0) return [];
+  if (!litDates || litDates.length === 0) return { staffing: [], celebrant: [] };
 
   const litDateIds = litDates.map((ld) => ld.id);
 
-  const { data: massTimes, error: mtError } = await supabase
-    .from("mass_time")
-    .select("id, liturgical_date_id, time_label, display_name")
-    .in("liturgical_date_id", litDateIds)
-    .order("sort_order");
-  if (mtError) throw mtError;
-  if (!massTimes || massTimes.length === 0) return [];
+  // Try with Phase 2A columns (template_id); fall back if migration not yet applied
+  let massTimes: { id: string; liturgical_date_id: string; time_label: string; display_name: string; template_id?: string | null }[] | null = null;
+  {
+    const { data, error } = await supabase
+      .from("mass_time")
+      .select("id, liturgical_date_id, time_label, display_name, template_id")
+      .in("liturgical_date_id", litDateIds)
+      .order("sort_order");
+    if (!error) {
+      massTimes = data;
+    } else {
+      const { data: fallback, error: fbError } = await supabase
+        .from("mass_time")
+        .select("id, liturgical_date_id, time_label, display_name")
+        .in("liturgical_date_id", litDateIds)
+        .order("sort_order");
+      if (fbError) throw fbError;
+      massTimes = fallback;
+    }
+  }
+  if (!massTimes || massTimes.length === 0) return { staffing: [], celebrant: [] };
 
   const massTimeIds = massTimes.map((mt) => mt.id);
 
-  const { data: assignments, error: aError } = await supabase
-    .from("assignment")
-    .select("mass_time_id, role, status")
-    .in("mass_time_id", massTimeIds);
-  if (aError) throw aError;
+  // Try with Phase 2A minister columns; fall back to base columns if not migrated
+  let assignments: any[] | null = null;
+  {
+    const { data, error } = await supabase
+      .from("assignment")
+      .select("mass_time_id, role, status, minister_id, minister(id, first_name, last_name, priest_type, minister_diocese, letter_of_suitability, letter_expiration_date)")
+      .in("mass_time_id", massTimeIds);
+    if (!error) {
+      assignments = data;
+    } else {
+      const { data: fallback, error: fbError } = await supabase
+        .from("assignment")
+        .select("mass_time_id, role, status, minister_id, minister(id, first_name, last_name)")
+        .in("mass_time_id", massTimeIds);
+      if (fbError) throw fbError;
+      assignments = fallback;
+    }
+  }
 
-  // Group assignments by mass_time_id
-  const assignByMass = new Map<string, { role: string; status: string }[]>();
+  // Fetch template role configs
+  const templateIds = Array.from(new Set(
+    massTimes.filter((mt) => mt.template_id).map((mt) => mt.template_id as string)
+  ));
+  const templateRoleMap = new Map<string, Pick<MassTemplateRoleConfig, "role" | "min_count">[]>();
+  if (templateIds.length > 0) {
+    const { data: roleConfigs } = await supabase
+      .from("mass_template_role")
+      .select("template_id, role, min_count")
+      .in("template_id", templateIds);
+    for (const rc of roleConfigs ?? []) {
+      if (!templateRoleMap.has(rc.template_id)) templateRoleMap.set(rc.template_id, []);
+      templateRoleMap.get(rc.template_id)!.push({ role: rc.role, min_count: rc.min_count });
+    }
+  }
+
+  const assignByMass = new Map<string, any[]>();
   for (const a of assignments ?? []) {
     if (!assignByMass.has(a.mass_time_id)) assignByMass.set(a.mass_time_id, []);
     assignByMass.get(a.mass_time_id)!.push(a);
@@ -396,22 +526,25 @@ export async function getUpcomingAlerts(
 
   const dateByLitId = new Map(litDates.map((ld) => [ld.id, ld.date]));
 
-  const alerts: StaffingAlert[] = [];
+  const staffing: StaffingAlert[] = [];
+  const celebrant: CelebrantAlert[] = [];
+  const today8601 = format(today, "yyyy-MM-dd");
 
   for (const mt of massTimes) {
     const mtAssignments = assignByMass.get(mt.id) ?? [];
+    const templateRoles = mt.template_id ? templateRoleMap.get(mt.template_id) : undefined;
     const status = computeStaffingStatus(
-      mtAssignments as Pick<Assignment, "role" | "status">[]
+      mtAssignments as Pick<Assignment, "role" | "status">[],
+      templateRoles
     );
 
+    const date = dateByLitId.get(mt.liturgical_date_id)!;
+
     if (status === "RED" || status === "YELLOW") {
-      const date = dateByLitId.get(mt.liturgical_date_id)!;
       const activeRoles = new Set(
-        mtAssignments
-          .filter((a) => a.status !== "ABSENT")
-          .map((a) => a.role)
+        mtAssignments.filter((a) => a.status !== "ABSENT").map((a) => a.role)
       );
-      alerts.push({
+      staffing.push({
         date,
         mass_time_id: mt.id,
         time_label: mt.time_label,
@@ -420,15 +553,51 @@ export async function getUpcomingAlerts(
         missing_priest: !activeRoles.has("CELEBRANT"),
       });
     }
+
+    // Check for visiting celebrant letter warnings
+    for (const a of mtAssignments) {
+      if (a.status === "ABSENT") continue;
+      if (a.role !== "CELEBRANT") continue;
+      const m = a.minister;
+      if (!m || m.priest_type !== "VISITING_CELEBRANT") continue;
+
+      const isDallaDiocese = !m.minister_diocese || m.minister_diocese === "Diocese of Dallas";
+      const letterMissing = !m.letter_of_suitability;
+      const letterExpired =
+        !isDallaDiocese &&
+        m.letter_expiration_date != null &&
+        m.letter_expiration_date < today8601;
+
+      if (letterMissing) {
+        celebrant.push({
+          date,
+          mass_time_id: mt.id,
+          time_label: mt.time_label,
+          display_name: mt.display_name,
+          minister_name: `${m.first_name} ${m.last_name}`,
+          warning: "missing_letter",
+        });
+      } else if (letterExpired) {
+        celebrant.push({
+          date,
+          mass_time_id: mt.id,
+          time_label: mt.time_label,
+          display_name: mt.display_name,
+          minister_name: `${m.first_name} ${m.last_name}`,
+          warning: "expired_letter",
+        });
+      }
+    }
   }
 
-  // RED before YELLOW, then chronologically
-  alerts.sort((a, b) => {
+  staffing.sort((a, b) => {
     if (a.status !== b.status) return a.status === "RED" ? -1 : 1;
     return a.date.localeCompare(b.date);
   });
 
-  return alerts;
+  celebrant.sort((a, b) => a.date.localeCompare(b.date));
+
+  return { staffing, celebrant };
 }
 
 // ---------------------------------------------------------------------------
@@ -444,7 +613,6 @@ export async function getCheckInsForMassTime(
     .select("id")
     .eq("mass_time_id", massTimeId);
   if (aError) throw aError;
-
   if (!assignments || assignments.length === 0) return [];
 
   const { data, error } = await supabase

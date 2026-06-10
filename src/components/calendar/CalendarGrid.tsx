@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { getDayOfMonth } from "@/lib/utils";
 import { STATUS_DOT_CLASSES, STATUS_LABELS } from "@/lib/staffing";
+import { LANGUAGE_SHORT } from "@/types";
 import type { CalendarDayStatus } from "@/types";
 import { startOfMonth, getDay } from "date-fns";
 
@@ -11,7 +12,7 @@ const DAY_HEADERS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 interface CalendarGridProps {
   year: number;
-  month: number; // 1-based
+  month: number;
   days: CalendarDayStatus[];
 }
 
@@ -19,7 +20,6 @@ export function CalendarGrid({ year, month, days }: CalendarGridProps) {
   const router = useRouter();
 
   const monthStart = startOfMonth(new Date(year, month - 1, 1));
-  // Sunday = 0 in date-fns getDay
   const startPadding = getDay(monthStart);
 
   const handleDayClick = (day: CalendarDayStatus) => {
@@ -43,7 +43,6 @@ export function CalendarGrid({ year, month, days }: CalendarGridProps) {
 
       {/* Calendar grid */}
       <div className="grid grid-cols-7">
-        {/* Leading blank cells for alignment */}
         {Array.from({ length: startPadding }).map((_, i) => (
           <div key={`pad-${i}`} className="h-20 border-b border-r border-slate-100 bg-slate-50/50" />
         ))}
@@ -76,7 +75,7 @@ export function CalendarGrid({ year, month, days }: CalendarGridProps) {
                 {dayNum}
               </span>
 
-              {/* Feast name (truncated) */}
+              {/* Feast name */}
               {day.feast_name && (
                 <span className="mt-0.5 text-[10px] leading-tight text-parish-700 font-medium line-clamp-2">
                   {day.feast_name}
@@ -90,9 +89,9 @@ export function CalendarGrid({ year, month, days }: CalendarGridProps) {
                 </span>
               )}
 
-              {/* Staffing status dot — color alone communicates status */}
+              {/* Status dot + language tags */}
               {isActive && day.status && (
-                <div className="mt-auto flex items-center">
+                <div className="mt-auto flex items-center gap-1.5 flex-wrap">
                   <span
                     className={cn(
                       "inline-block h-2 w-2 rounded-full flex-shrink-0",
@@ -100,6 +99,15 @@ export function CalendarGrid({ year, month, days }: CalendarGridProps) {
                     )}
                     title={STATUS_LABELS[day.status]}
                   />
+                  {day.languages.map((lang) => (
+                    <span
+                      key={lang}
+                      className="text-[9px] font-semibold text-slate-400 leading-none"
+                      title={lang}
+                    >
+                      {LANGUAGE_SHORT[lang]}
+                    </span>
+                  ))}
                 </div>
               )}
             </div>

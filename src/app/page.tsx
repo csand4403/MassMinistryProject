@@ -16,7 +16,7 @@ export default async function CalendarPage({ searchParams }: PageProps) {
   const month = params.month ? parseInt(params.month) : now.getMonth() + 1;
 
   const supabase = await createClient();
-  const [days, alerts] = await Promise.all([
+  const [days, { staffing, celebrant }] = await Promise.all([
     getCalendarMonth(supabase, year, month),
     getUpcomingAlerts(supabase),
   ]);
@@ -30,7 +30,7 @@ export default async function CalendarPage({ searchParams }: PageProps) {
         </p>
       </div>
 
-      <AlertBanner alerts={alerts} />
+      <AlertBanner staffingAlerts={staffing} celebrantAlerts={celebrant} />
 
       <MonthNav year={year} month={month} />
       <CalendarGrid year={year} month={month} days={days} />
