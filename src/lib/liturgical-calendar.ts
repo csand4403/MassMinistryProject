@@ -2,7 +2,7 @@
 // Liturgical Calendar Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { LiturgicalSeason } from "@/types";
+import type { LiturgicalSeason, MassType } from "@/types";
 
 // Returns Easter Sunday for a given year (Gregorian algorithm).
 export function computeEaster(year: number): Date {
@@ -103,4 +103,24 @@ export function formatTimeLabel(startTime: string): string {
 export function timeSortOrder(startTime: string): number {
   const [hStr, mStr] = startTime.split(":");
   return parseInt(hStr, 10) * 60 + parseInt(mStr, 10);
+}
+
+export function getHolyDayOfObligationName(dateStr: string): string | null {
+  const [, month, day] = dateStr.split("-").map(Number);
+  const fixedHolyDays: Record<string, string> = {
+    "01-01": "Solemnity of Mary, Mother of God",
+    "08-15": "Assumption of the Blessed Virgin Mary",
+    "11-01": "All Saints",
+    "12-08": "Immaculate Conception",
+    "12-25": "Christmas",
+  };
+  return fixedHolyDays[`${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`] ?? null;
+}
+
+export function isHolyDayOfObligation(dateStr: string): boolean {
+  return getHolyDayOfObligationName(dateStr) !== null;
+}
+
+export function massTypeForDate(dateStr: string): MassType {
+  return isHolyDayOfObligation(dateStr) ? "HOLY_DAY_OF_OBLIGATION" : "REGULAR";
 }

@@ -90,14 +90,14 @@ export function CalendarGrid({ year, month, days }: CalendarGridProps) {
               )}
 
               {/* Status dot + language tags */}
-              {isActive && day.status && (
+              {isActive && (day.status || day.has_cancelled_mass) && (
                 <div className="mt-auto flex items-center gap-1.5 flex-wrap">
                   <span
                     className={cn(
                       "inline-block h-2 w-2 rounded-full flex-shrink-0",
-                      STATUS_DOT_CLASSES[day.status]
+                      day.status ? STATUS_DOT_CLASSES[day.status] : "bg-slate-400"
                     )}
-                    title={STATUS_LABELS[day.status]}
+                    title={day.status ? STATUS_LABELS[day.status] : "Cancelled"}
                   />
                   {day.languages.map((lang) => (
                     <span

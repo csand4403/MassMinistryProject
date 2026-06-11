@@ -143,7 +143,7 @@ export async function generateMassTimesForTemplate(
     .from("mass_time")
     .select("id, liturgical_date_id, template_id")
     .in("liturgical_date_id", litDateIds)
-    .eq("time_label", timeLabel);
+    .eq("template_id", templateId);
 
   const mtByLitDateId = new Map<string, { id: string; template_id: string | null }>(
     (existingMassTimes ?? []).map(

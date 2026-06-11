@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { setMassTimeStatus } from "@/lib/actions";
 import {
   getMassTimeWithRoster,
   getCheckInsForMassTime,
@@ -10,7 +11,7 @@ import {
 import { RoleSectionWithAssign } from "@/components/mass/RoleSectionWithAssign";
 import { FeastBanner } from "@/components/mass/FeastBanner";
 import { formatDate } from "@/lib/utils";
-import { ROLE_DISPLAY_ORDER, LANGUAGE_LABELS } from "@/types";
+import { ROLE_DISPLAY_ORDER, LANGUAGE_LABELS, MASS_STATUS_LABELS, MASS_TYPE_LABELS } from "@/types";
 import {
   STATUS_BADGE_CLASSES,
   STATUS_DOT_CLASSES,
@@ -65,6 +66,7 @@ export default async function MassDetailPage({ params }: PageProps) {
   }
 
   const { staffing_status } = massTime;
+  const isCancelled = massTime.status === "CANCELLED";
 
   // Count checked-in vs total assigned (excluding absent)
   const activeAssignments = massTime.assignments.filter(
@@ -91,13 +93,36 @@ export default async function MassDetailPage({ params }: PageProps) {
       <div className="mb-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-navy-900">
+            <h1 className={cn("text-2xl font-bold", isCancelled ? "text-slate-500 line-through" : "text-navy-900")}>
               {massTime.time_label} — {massTime.display_name}
             </h1>
-            <p className="text-sm text-slate-500 mt-0.5">{formatDate(date)}</p>
+            <p className="text-sm text-slate-500 mt-0.5">
+              {formatDate(date)}
+              {massTime.mass_type !== "REGULAR" && (
+                <span className="ml-2 rounded bg-parish-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-parish-700">
+                  {MASS_TYPE_LABELS[massTime.mass_type]}
+                </span>
+              )}
+            </p>
+            {massTime.notes && (
+              <p className="mt-1 text-sm text-slate-500">{massTime.notes}</p>
+            )}
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            <form action={setMassTimeStatus.bind(null, massTime.id, date, isCancelled ? "SCHEDULED" : "CANCELLED")}>
+              <button
+                type="submit"
+                className={cn(
+                  "rounded px-3 py-1.5 text-sm font-semibold ring-1 transition-colors",
+                  isCancelled
+                    ? "bg-white text-navy-700 ring-navy-200 hover:bg-navy-50"
+                    : "bg-slate-50 text-slate-500 ring-slate-200 hover:bg-slate-100 hover:text-slate-700"
+                )}
+              >
+                {isCancelled ? "Uncancel" : "Cancel this Mass"}
+              </button>
+            </form>
             {/* Language badge */}
             {massTime.language && (
               <span className="rounded-full px-3 py-1.5 text-sm font-medium bg-sky-50 text-sky-700 ring-1 ring-sky-200">
@@ -105,25 +130,32 @@ export default async function MassDetailPage({ params }: PageProps) {
               </span>
             )}
             {/* Staffing status */}
-            <span
-              className={cn(
-                "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold ring-1",
-                STATUS_BADGE_CLASSES[staffing_status]
-              )}
-            >
+            {isCancelled ? (
+              <span className="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1.5 text-sm font-semibold text-slate-500 ring-1 ring-slate-200">
+                <span className="h-2 w-2 rounded-full bg-slate-400" />
+                {MASS_STATUS_LABELS.CANCELLED}
+              </span>
+            ) : (
               <span
                 className={cn(
-                  "h-2 w-2 rounded-full",
-                  STATUS_DOT_CLASSES[staffing_status]
+                  "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold ring-1",
+                  STATUS_BADGE_CLASSES[staffing_status]
                 )}
-              />
-              {STATUS_LABELS[staffing_status]}
-            </span>
+              >
+                <span
+                  className={cn(
+                    "h-2 w-2 rounded-full",
+                    STATUS_DOT_CLASSES[staffing_status]
+                  )}
+                />
+                {STATUS_LABELS[staffing_status]}
+              </span>
+            )}
           </div>
         </div>
 
         {/* Check-in progress bar */}
-        {activeAssignments.length > 0 && (
+        {!isCancelled && activeAssignments.length > 0 && (
           <div className="mt-3">
             <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
               <span>Check-in progress</span>
@@ -151,7 +183,7 @@ export default async function MassDetailPage({ params }: PageProps) {
       )}
 
       {/* Full Roster */}
-      <div className="parish-card p-5">
+      <div className={cn("parish-card p-5", isCancelled && "bg-slate-50 opacity-75")}>
         <div className="flex items-center justify-between mb-5">
           <h2 className="section-header">
             <span className="h-4 w-1 rounded-full bg-navy-700" />

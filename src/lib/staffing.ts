@@ -10,7 +10,7 @@
 //   CELEBRANT ≥ 1, DEACON ≥ 1, all ministry roles ≥ 1.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Assignment, MinisterRole, StaffingStatus, MassTemplateRoleConfig } from "@/types";
+import type { Assignment, MinisterRole, StaffingStatus, MassTemplateRoleConfig, MassTimeRoleConfig } from "@/types";
 
 const DEFAULT_MINISTRY_ROLES: MinisterRole[] = [
   "LECTOR",
@@ -32,7 +32,7 @@ export function normalizeRole(role: string): string {
  */
 export function computeStaffingStatus(
   assignments: Pick<Assignment, "role" | "status">[],
-  templateRoles?: Pick<MassTemplateRoleConfig, "role" | "min_count">[]
+  templateRoles?: Pick<MassTemplateRoleConfig | MassTimeRoleConfig, "role" | "min_count">[]
 ): StaffingStatus {
   const active = assignments.filter((a) => a.status !== "ABSENT");
 

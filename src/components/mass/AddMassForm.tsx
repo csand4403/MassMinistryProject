@@ -1,0 +1,237 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { createOneOffMass } from "@/lib/actions";
+import {
+  LANGUAGE_LABELS,
+  MASS_TYPE_LABELS,
+  MASS_TYPE_OPTIONS,
+  ROLE_DISPLAY_ORDER,
+  ROLE_SHORT_LABELS,
+  type MassLanguage,
+  type MassType,
+  type MinisterRole,
+} from "@/types";
+
+const LANGUAGES: MassLanguage[] = [
+  "ENGLISH",
+  "SPANISH",
+  "FRENCH",
+  "BILINGUAL_EN_ES",
+  "BILINGUAL_EN_FR",
+];
+
+type RoleCounts = Record<MinisterRole, { min: number; max: number }>;
+
+const ZERO_COUNTS = Object.fromEntries(
+  ROLE_DISPLAY_ORDER.map((role) => [role, { min: 0, max: 0 }])
+) as RoleCounts;
+
+const ROLE_DEFAULTS: Record<MassType, Partial<RoleCounts>> = {
+  REGULAR: {
+    CELEBRANT: { min: 1, max: 1 },
+    DEACON: { min: 0, max: 1 },
+    LECTOR: { min: 1, max: 2 },
+    EMHC: { min: 1, max: 4 },
+    USHER: { min: 1, max: 4 },
+    ALTAR_SERVER: { min: 0, max: 4 },
+  },
+  FUNERAL: {
+    CELEBRANT: { min: 1, max: 1 },
+    LECTOR: { min: 1, max: 2 },
+    EMHC: { min: 2, max: 4 },
+    USHER: { min: 2, max: 4 },
+  },
+  WEDDING: {
+    CELEBRANT: { min: 1, max: 1 },
+    LECTOR: { min: 1, max: 2 },
+    ALTAR_SERVER: { min: 0, max: 2 },
+  },
+  HOLY_DAY: {
+    CELEBRANT: { min: 1, max: 1 },
+    DEACON: { min: 0, max: 1 },
+    LECTOR: { min: 2, max: 2 },
+    PSALMIST: { min: 1, max: 1 },
+    EMHC: { min: 4, max: 8 },
+    USHER: { min: 4, max: 8 },
+    ALTAR_SERVER: { min: 2, max: 6 },
+  },
+  HOLY_DAY_OF_OBLIGATION: {
+    CELEBRANT: { min: 1, max: 1 },
+    DEACON: { min: 0, max: 1 },
+    LECTOR: { min: 2, max: 2 },
+    PSALMIST: { min: 1, max: 1 },
+    EMHC: { min: 4, max: 8 },
+    USHER: { min: 4, max: 8 },
+    ALTAR_SERVER: { min: 2, max: 6 },
+  },
+  SCHOOL_MASS: {
+    CELEBRANT: { min: 1, max: 1 },
+    LECTOR: { min: 1, max: 2 },
+    ALTAR_SERVER: { min: 2, max: 6 },
+  },
+  ADORATION: {
+    CELEBRANT: { min: 0, max: 1 },
+    DEACON: { min: 0, max: 1 },
+  },
+  OTHER: {
+    CELEBRANT: { min: 1, max: 1 },
+  },
+};
+
+function countsForType(type: MassType): RoleCounts {
+  return {
+    ...ZERO_COUNTS,
+    ...ROLE_DEFAULTS[type],
+  };
+}
+
+export function AddMassForm({
+  date,
+  defaultMassType = "REGULAR",
+}: {
+  date: string;
+  defaultMassType?: MassType;
+}) {
+  const [massType, setMassType] = useState<MassType>(defaultMassType);
+  const [roleCounts, setRoleCounts] = useState<RoleCounts>(() => countsForType(defaultMassType));
+
+  const visibleRoles = useMemo(
+    () => ROLE_DISPLAY_ORDER.filter((role) => roleCounts[role].min > 0 || roleCounts[role].max > 0),
+    [roleCounts]
+  );
+
+  const updateMassType = (nextType: MassType) => {
+    setMassType(nextType);
+    setRoleCounts(countsForType(nextType));
+  };
+
+  const updateRole = (role: MinisterRole, field: "min" | "max", value: number) => {
+    setRoleCounts((prev) => ({
+      ...prev,
+      [role]: {
+        ...prev[role],
+        [field]: Math.max(0, value),
+      },
+    }));
+  };
+
+  return (
+    <details className="parish-card p-4">
+      <summary className="cursor-pointer list-none">
+        <span className="inline-flex items-center rounded bg-navy-700 px-3 py-2 text-sm font-semibold text-white hover:bg-navy-800">
+          Add Mass
+        </span>
+      </summary>
+
+      <form action={createOneOffMass} className="mt-4 space-y-4">
+        <input type="hidden" name="date" value={date} />
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Time</span>
+            <input
+              name="start_time"
+              type="time"
+              required
+              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Language</span>
+            <select
+              name="language"
+              defaultValue="ENGLISH"
+              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            >
+              {LANGUAGES.map((language) => (
+                <option key={language} value={language}>
+                  {LANGUAGE_LABELS[language]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Mass Type</span>
+            <select
+              name="mass_type"
+              value={massType}
+              onChange={(event) => updateMassType(event.target.value as MassType)}
+              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            >
+              {MASS_TYPE_OPTIONS.map((type) => (
+                <option key={type} value={type}>
+                  {MASS_TYPE_LABELS[type]}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Role Requirements
+          </p>
+          <div className="overflow-hidden rounded border border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">Role</th>
+                  <th className="w-24 px-3 py-2 text-left">Min</th>
+                  <th className="w-24 px-3 py-2 text-left">Max</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {(visibleRoles.length > 0 ? visibleRoles : ROLE_DISPLAY_ORDER.slice(0, 1)).map((role) => (
+                  <tr key={role}>
+                    <td className="px-3 py-2 font-medium text-slate-700">
+                      {ROLE_SHORT_LABELS[role]}
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="number"
+                        min={0}
+                        name={`role_${role}_min`}
+                        value={roleCounts[role].min}
+                        onChange={(event) => updateRole(role, "min", Number(event.target.value))}
+                        className="w-20 rounded border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        type="number"
+                        min={0}
+                        name={`role_${role}_max`}
+                        value={roleCounts[role].max}
+                        onChange={(event) => updateRole(role, "max", Number(event.target.value))}
+                        className="w-20 rounded border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <label className="block">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Notes</span>
+          <textarea
+            name="notes"
+            rows={3}
+            className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+          />
+        </label>
+
+        <button
+          type="submit"
+          className="rounded bg-navy-700 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-800"
+        >
+          Save Mass
+        </button>
+      </form>
+    </details>
+  );
+}

@@ -17,6 +17,7 @@ import type {
   CelebrantAlert,
   MassTemplate,
   MassTemplateRoleConfig,
+  MassTimeRoleConfig,
   MassLanguage,
 } from "@/types";
 import { computeStaffingStatus, computeDayStatus, normalizeRole } from "./staffing";
@@ -94,17 +95,18 @@ export async function getCalendarMonth(
 
   const statusMap = new Map<string, StaffingStatus>();
   const languageMap = new Map<string, MassLanguage[]>(); // date → languages
+  const cancelledMap = new Map<string, boolean>();
 
   if (litDates && litDates.length > 0) {
     const litDateIds = litDates.map((ld) => ld.id);
 
     // Try to fetch with Phase 2A columns (template_id, language).
     // Falls back to base columns if migration hasn't been applied yet.
-    let massTimes: { id: string; liturgical_date_id: string; template_id?: string | null; language?: string | null }[] | null = null;
+    let massTimes: { id: string; liturgical_date_id: string; template_id?: string | null; language?: string | null; status?: string | null }[] | null = null;
     {
       const { data, error } = await supabase
         .from("mass_time")
-        .select("id, liturgical_date_id, template_id, language")
+        .select("id, liturgical_date_id, template_id, language, status")
         .in("liturgical_date_id", litDateIds);
       if (!error) {
         massTimes = data;
@@ -131,7 +133,7 @@ export async function getCalendarMonth(
 
       // Fetch template role configs for linked templates (Phase 2A)
       const templateIds = Array.from(new Set(
-        massTimes.filter((mt) => mt.template_id).map((mt) => mt.template_id as string)
+        massTimes.filter((mt) => mt.template_id && mt.status !== "CANCELLED").map((mt) => mt.template_id as string)
       ));
 
       const templateRoleMap = new Map<string, Pick<MassTemplateRoleConfig, "role" | "min_count">[]>();
@@ -143,6 +145,21 @@ export async function getCalendarMonth(
         for (const rc of roleConfigs ?? []) {
           if (!templateRoleMap.has(rc.template_id)) templateRoleMap.set(rc.template_id, []);
           templateRoleMap.get(rc.template_id)!.push({ role: rc.role, min_count: rc.min_count });
+        }
+      }
+
+      const oneOffIds = massTimes
+        .filter((mt) => !mt.template_id && mt.status !== "CANCELLED")
+        .map((mt) => mt.id);
+      const massTimeRoleMap = new Map<string, Pick<MassTimeRoleConfig, "role" | "min_count">[]>();
+      if (oneOffIds.length > 0) {
+        const { data: roleConfigs } = await supabase
+          .from("mass_time_role")
+          .select("mass_time_id, role, min_count")
+          .in("mass_time_id", oneOffIds);
+        for (const rc of roleConfigs ?? []) {
+          if (!massTimeRoleMap.has(rc.mass_time_id)) massTimeRoleMap.set(rc.mass_time_id, []);
+          massTimeRoleMap.get(rc.mass_time_id)!.push({ role: rc.role, min_count: rc.min_count });
         }
       }
 
@@ -166,22 +183,30 @@ export async function getCalendarMonth(
 
       for (const ld of litDates) {
         const mts = massTimesByDate.get(ld.id) ?? [];
+        const activeMts = mts.filter((mt) => mt.status !== "CANCELLED");
+        if (mts.some((mt) => mt.status === "CANCELLED")) {
+          cancelledMap.set(ld.date, true);
+        }
 
         // Collect languages for this date
         const langs: MassLanguage[] = [];
-        for (const mt of mts) {
+        for (const mt of activeMts) {
           if (mt.language && !langs.includes(mt.language as MassLanguage)) {
             langs.push(mt.language as MassLanguage);
           }
         }
         if (langs.length > 0) languageMap.set(ld.date, langs);
 
-        const massStatuses: StaffingStatus[] = mts.map((mt) => {
+        const massStatuses: StaffingStatus[] = activeMts.map((mt) => {
           const asgns = assignByMass.get(mt.id) ?? [];
-          const templateRoles = mt.template_id ? templateRoleMap.get(mt.template_id) : undefined;
+          const templateRoles = mt.template_id
+            ? templateRoleMap.get(mt.template_id)
+            : massTimeRoleMap.get(mt.id);
           return computeStaffingStatus(asgns as any, templateRoles);
         });
-        statusMap.set(ld.date, computeDayStatus(massStatuses));
+        if (massStatuses.length > 0) {
+          statusMap.set(ld.date, computeDayStatus(massStatuses));
+        }
       }
     }
   }
@@ -202,8 +227,9 @@ export async function getCalendarMonth(
       feast_name: litDate?.feast_name ?? null,
       is_holy_day_of_obligation: litDate?.is_holy_day_of_obligation ?? false,
       season: litDate?.season ?? null,
-      status: isActive ? (statusMap.get(dateStr) ?? "RED") : null,
+      status: isActive ? (statusMap.get(dateStr) ?? (cancelledMap.get(dateStr) ? null : "RED")) : null,
       languages: isActive ? (languageMap.get(dateStr) ?? []) : [],
+      has_cancelled_mass: cancelledMap.get(dateStr) ?? false,
     };
   });
 }
@@ -233,7 +259,8 @@ export async function getLiturgicalDateWithMasses(
   if (!litDate) return null;
 
   const massTimes = await getMassTimesWithRosters(supabase, litDate.id);
-  const overallStatus = computeDayStatus(massTimes.map((mt) => mt.staffing_status));
+  const activeMassTimes = massTimes.filter((mt) => mt.status !== "CANCELLED");
+  const overallStatus = computeDayStatus(activeMassTimes.map((mt) => mt.staffing_status));
 
   return {
     ...litDate,
@@ -285,6 +312,17 @@ export async function getMassTimesWithRosters(
     }
   }
 
+  const { data: massTimeRoles } = await supabase
+    .from("mass_time_role")
+    .select("*")
+    .in("mass_time_id", massTimeIds);
+
+  const roleConfigByMass = new Map<string, MassTimeRoleConfig[]>();
+  for (const rc of massTimeRoles ?? []) {
+    if (!roleConfigByMass.has(rc.mass_time_id)) roleConfigByMass.set(rc.mass_time_id, []);
+    roleConfigByMass.get(rc.mass_time_id)!.push(rc);
+  }
+
   const assignByMass = new Map<string, (Assignment & { minister: Minister })[]>();
   for (const mt of massTimes) {
     assignByMass.set(mt.id, []);
@@ -296,15 +334,17 @@ export async function getMassTimesWithRosters(
   return massTimes.map((mt: MassTime) => {
     const mtAssignments = (assignByMass.get(mt.id) ?? []).map(normalizeAssignment);
     const template = mt.template_id ? templateMap.get(mt.template_id) ?? null : null;
-    const templateRoles = template?.role_configs?.map((rc) => ({
+    const occurrenceRoles = roleConfigByMass.get(mt.id);
+    const templateRoles = occurrenceRoles?.length ? occurrenceRoles : template?.role_configs?.map((rc) => ({
       role: rc.role,
       min_count: rc.min_count,
     }));
     return {
       ...mt,
       assignments: mtAssignments,
-      staffing_status: computeStaffingStatus(mtAssignments, templateRoles),
+      staffing_status: mt.status === "CANCELLED" ? "GREEN" : computeStaffingStatus(mtAssignments, templateRoles),
       template,
+      role_configs: occurrenceRoles ?? [],
     };
   });
 }
@@ -338,7 +378,13 @@ export async function getMassTimeWithRoster(
     if (tmpl) template = { ...tmpl, role_configs: tmpl.mass_template_role ?? [] };
   }
 
-  const templateRoles = template?.role_configs?.map((rc) => ({
+  const { data: occurrenceRoles } = await supabase
+    .from("mass_time_role")
+    .select("*")
+    .eq("mass_time_id", massTimeId);
+
+  const massTimeRoles = (occurrenceRoles ?? []) as MassTimeRoleConfig[];
+  const templateRoles = massTimeRoles.length ? massTimeRoles : template?.role_configs?.map((rc) => ({
     role: rc.role,
     min_count: rc.min_count,
   }));
@@ -346,8 +392,9 @@ export async function getMassTimeWithRoster(
   return {
     ...mt,
     assignments: normalized,
-    staffing_status: computeStaffingStatus(normalized, templateRoles),
+    staffing_status: mt.status === "CANCELLED" ? "GREEN" : computeStaffingStatus(normalized, templateRoles),
     template,
+    role_configs: massTimeRoles,
   };
 }
 
@@ -460,11 +507,11 @@ export async function getUpcomingAlerts(
   const litDateIds = litDates.map((ld) => ld.id);
 
   // Try with Phase 2A columns (template_id); fall back if migration not yet applied
-  let massTimes: { id: string; liturgical_date_id: string; time_label: string; display_name: string; template_id?: string | null }[] | null = null;
+  let massTimes: { id: string; liturgical_date_id: string; time_label: string; display_name: string; template_id?: string | null; status?: string | null }[] | null = null;
   {
     const { data, error } = await supabase
       .from("mass_time")
-      .select("id, liturgical_date_id, time_label, display_name, template_id")
+      .select("id, liturgical_date_id, time_label, display_name, template_id, status")
       .in("liturgical_date_id", litDateIds)
       .order("sort_order");
     if (!error) {
@@ -480,6 +527,8 @@ export async function getUpcomingAlerts(
     }
   }
   if (!massTimes || massTimes.length === 0) return { staffing: [], celebrant: [] };
+  massTimes = massTimes.filter((mt) => mt.status !== "CANCELLED");
+  if (massTimes.length === 0) return { staffing: [], celebrant: [] };
 
   const massTimeIds = massTimes.map((mt) => mt.id);
 
@@ -518,6 +567,19 @@ export async function getUpcomingAlerts(
     }
   }
 
+  const oneOffIds = massTimes.filter((mt) => !mt.template_id).map((mt) => mt.id);
+  const massTimeRoleMap = new Map<string, Pick<MassTimeRoleConfig, "role" | "min_count">[]>();
+  if (oneOffIds.length > 0) {
+    const { data: roleConfigs } = await supabase
+      .from("mass_time_role")
+      .select("mass_time_id, role, min_count")
+      .in("mass_time_id", oneOffIds);
+    for (const rc of roleConfigs ?? []) {
+      if (!massTimeRoleMap.has(rc.mass_time_id)) massTimeRoleMap.set(rc.mass_time_id, []);
+      massTimeRoleMap.get(rc.mass_time_id)!.push({ role: rc.role, min_count: rc.min_count });
+    }
+  }
+
   const assignByMass = new Map<string, any[]>();
   for (const a of assignments ?? []) {
     if (!assignByMass.has(a.mass_time_id)) assignByMass.set(a.mass_time_id, []);
@@ -532,7 +594,7 @@ export async function getUpcomingAlerts(
 
   for (const mt of massTimes) {
     const mtAssignments = assignByMass.get(mt.id) ?? [];
-    const templateRoles = mt.template_id ? templateRoleMap.get(mt.template_id) : undefined;
+    const templateRoles = mt.template_id ? templateRoleMap.get(mt.template_id) : massTimeRoleMap.get(mt.id);
     const status = computeStaffingStatus(
       mtAssignments as Pick<Assignment, "role" | "status">[],
       templateRoles

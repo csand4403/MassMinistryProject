@@ -87,6 +87,48 @@ export const LANGUAGE_SHORT: Record<MassLanguage, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Mass occurrence status and type
+// ---------------------------------------------------------------------------
+export type MassStatus = "SCHEDULED" | "CANCELLED";
+
+export const MASS_STATUS_LABELS: Record<MassStatus, string> = {
+  SCHEDULED: "Scheduled",
+  CANCELLED: "Cancelled",
+};
+
+export type MassType =
+  | "REGULAR"
+  | "FUNERAL"
+  | "WEDDING"
+  | "HOLY_DAY"
+  | "HOLY_DAY_OF_OBLIGATION"
+  | "SCHOOL_MASS"
+  | "ADORATION"
+  | "OTHER";
+
+export const MASS_TYPE_LABELS: Record<MassType, string> = {
+  REGULAR: "Regular",
+  FUNERAL: "Funeral",
+  WEDDING: "Wedding",
+  HOLY_DAY: "Holy Day",
+  HOLY_DAY_OF_OBLIGATION: "Holy Day of Obligation",
+  SCHOOL_MASS: "School Mass",
+  ADORATION: "Adoration",
+  OTHER: "Other",
+};
+
+export const MASS_TYPE_OPTIONS: MassType[] = [
+  "REGULAR",
+  "FUNERAL",
+  "WEDDING",
+  "HOLY_DAY",
+  "HOLY_DAY_OF_OBLIGATION",
+  "SCHOOL_MASS",
+  "ADORATION",
+  "OTHER",
+];
+
+// ---------------------------------------------------------------------------
 // Priest type
 // ---------------------------------------------------------------------------
 export type PriestType =
@@ -250,6 +292,9 @@ export interface MassTime {
   is_special: boolean;
   template_id: string | null;
   language: MassLanguage;
+  status: MassStatus;
+  mass_type: MassType;
+  notes: string | null;
   created_at: string;
 }
 
@@ -305,6 +350,14 @@ export interface MassTemplateRoleConfig {
   max_count: number;
 }
 
+export interface MassTimeRoleConfig {
+  id: string;
+  mass_time_id: string;
+  role: MinisterRole;
+  min_count: number;
+  max_count: number;
+}
+
 export interface MassTemplate {
   id: string;
   parish_id: string;
@@ -327,6 +380,7 @@ export interface MassTimeWithRoster extends MassTime {
   assignments: (Assignment & { minister: Minister })[];
   staffing_status: StaffingStatus;
   template?: MassTemplate | null;
+  role_configs?: MassTimeRoleConfig[];
 }
 
 export interface LiturgicalDateWithMasses extends LiturgicalDate {
@@ -344,6 +398,7 @@ export interface CalendarDayStatus {
   season: LiturgicalSeason | null;
   status: StaffingStatus | null;
   languages: MassLanguage[];  // languages of masses on this day
+  has_cancelled_mass: boolean;
 }
 
 export interface StaffingAlert {

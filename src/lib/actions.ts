@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType } from "@/types";
-import { DAY_TYPE_TO_DB } from "@/types";
+import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType, MassStatus, MassType } from "@/types";
+import { DAY_TYPE_TO_DB, MASS_TYPE_LABELS, ROLE_DISPLAY_ORDER } from "@/types";
+import { formatTimeLabel, getHolyDayOfObligationName, getLiturgicalSeason, isHolyDayOfObligation, timeSortOrder } from "@/lib/liturgical-calendar";
 import {
   generateMassTimesForTemplate,
   propagateTemplateUpdates,
@@ -413,6 +414,126 @@ export async function deleteTemplate(
   revalidatePath("/settings");
   revalidatePath("/", "layout");
   return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// Calendar exceptions
+// ---------------------------------------------------------------------------
+
+export async function createOneOffMass(
+  formData: FormData
+): Promise<void> {
+  const supabase = await createClient();
+
+  const date = String(formData.get("date") ?? "");
+  const startTime = String(formData.get("start_time") ?? "");
+  const language = String(formData.get("language") ?? "ENGLISH") as MassLanguage;
+  const massType = String(formData.get("mass_type") ?? "REGULAR") as MassType;
+  const notes = String(formData.get("notes") ?? "").trim();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(startTime)) {
+    throw new Error("A valid date and time are required.");
+  }
+
+  const { data: parish, error: pError } = await supabase
+    .from("parish")
+    .select("id")
+    .single();
+  if (pError) throw new Error(pError.message);
+
+  const { data: existingLitDate, error: existingLdError } = await supabase
+    .from("liturgical_date")
+    .select("id")
+    .eq("parish_id", parish.id)
+    .eq("date", date)
+    .maybeSingle();
+  if (existingLdError) throw new Error(existingLdError.message);
+
+  const holyDayName = getHolyDayOfObligationName(date);
+  let litDate = existingLitDate;
+  if (!litDate) {
+    const { data: insertedLitDate, error: ldError } = await supabase
+      .from("liturgical_date")
+      .insert({
+          parish_id: parish.id,
+          date,
+          season: getLiturgicalSeason(date),
+          is_high_feast: massType === "HOLY_DAY" || massType === "HOLY_DAY_OF_OBLIGATION" || !!holyDayName,
+          is_holy_day_of_obligation: massType === "HOLY_DAY_OF_OBLIGATION" || isHolyDayOfObligation(date),
+          feast_name: holyDayName,
+          notes: null,
+        })
+      .select("id")
+      .single();
+    if (ldError) throw new Error(ldError.message);
+    litDate = insertedLitDate;
+  } else if (massType === "HOLY_DAY" || massType === "HOLY_DAY_OF_OBLIGATION") {
+    const litDateUpdates: Record<string, string | boolean> = { is_high_feast: true };
+    if (massType === "HOLY_DAY_OF_OBLIGATION") litDateUpdates.is_holy_day_of_obligation = true;
+    if (holyDayName) litDateUpdates.feast_name = holyDayName;
+    await supabase
+      .from("liturgical_date")
+      .update(litDateUpdates)
+      .eq("id", litDate.id);
+  }
+
+  const timeLabel = formatTimeLabel(startTime);
+  const massTypeLabel = MASS_TYPE_LABELS[massType] ?? "Special";
+  const displayName = massType === "REGULAR" ? `${timeLabel} Mass` : `${massTypeLabel} Mass`;
+
+  const { data: massTime, error: mtError } = await supabase
+    .from("mass_time")
+    .insert({
+      liturgical_date_id: litDate.id,
+      time_label: timeLabel,
+      display_name: displayName,
+      sort_order: timeSortOrder(startTime),
+      is_special: massType !== "REGULAR",
+      template_id: null,
+      language,
+      status: "SCHEDULED",
+      mass_type: massType,
+      notes: notes || null,
+    })
+    .select("id")
+    .single();
+  if (mtError) throw new Error(mtError.message);
+
+  const roleRows = ROLE_DISPLAY_ORDER.map((role) => {
+    const min = Number(formData.get(`role_${role}_min`) ?? 0);
+    const max = Number(formData.get(`role_${role}_max`) ?? min);
+    return {
+      mass_time_id: massTime.id,
+      role,
+      min_count: Number.isFinite(min) ? Math.max(0, min) : 0,
+      max_count: Number.isFinite(max) ? Math.max(0, max) : 0,
+    };
+  }).filter((rc) => rc.min_count > 0 || rc.max_count > 0);
+
+  if (roleRows.length > 0) {
+    const { error: rcError } = await supabase.from("mass_time_role").insert(roleRows);
+    if (rcError) throw new Error(rcError.message);
+  }
+
+  revalidatePath(`/mass/${date}`);
+  revalidatePath("/", "layout");
+}
+
+export async function setMassTimeStatus(
+  massTimeId: string,
+  date: string,
+  status: MassStatus
+): Promise<void> {
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("mass_time")
+    .update({ status })
+    .eq("id", massTimeId);
+  if (error) throw new Error(error.message);
+
+  revalidatePath(`/mass/${date}`);
+  revalidatePath(`/mass/${date}/${massTimeId}`);
+  revalidatePath("/", "layout");
 }
 
 // ---------------------------------------------------------------------------
