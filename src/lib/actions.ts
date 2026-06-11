@@ -5,13 +5,27 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType, MassStatus, MassType } from "@/types";
 import { DAY_TYPE_TO_DB, MASS_TYPE_LABELS, ROLE_DISPLAY_ORDER } from "@/types";
-import { formatTimeLabel, getHolyDayOfObligationName, getLiturgicalSeason, isHolyDayOfObligation, timeSortOrder } from "@/lib/liturgical-calendar";
+import { formatTimeLabel, getHolyDayOfObligationName, getLiturgicalSeason, inferMassTypeForDateTime, isHolyDayOfObligation, timeSortOrder } from "@/lib/liturgical-calendar";
 import {
   generateMassTimesForTemplate,
   propagateTemplateUpdates,
   smartDeleteTemplateMasses,
   backfillTemplateLinks,
 } from "@/lib/schedule-engine";
+
+function inferMassTypeForTemplate(
+  dayType: MassDayType,
+  daysOfWeek: number[] | null,
+  startTime: string
+): MassType {
+  if (dayType === "SUNDAY") return "SUNDAY_MASS";
+  if (dayType === "HOLY_DAY") return "HOLY_DAY_OF_OBLIGATION";
+  if (dayType === "SCHOOL_MASS") return "SCHOOL_MASS";
+  if (daysOfWeek?.length === 1 && daysOfWeek[0] === 6 && startTime >= "16:00") {
+    return "SATURDAY_VIGIL";
+  }
+  return "DAILY_MASS";
+}
 
 // ---------------------------------------------------------------------------
 // Check-in
@@ -258,6 +272,7 @@ export async function createTemplate(formData: {
   days_of_week?: number[];  // override for multi-day weekday templates
   start_time: string;
   language: MassLanguage;
+  mass_type?: MassType;
   notes?: string;
   role_configs: { role: string; min_count: number; max_count: number }[];
 }): Promise<{ success: boolean; error?: string; id?: string; generated?: { liturgicalDates: number; massTimes: number } }> {
@@ -281,6 +296,7 @@ export async function createTemplate(formData: {
       day_of_week: dbDayOfWeek,
       start_time: formData.start_time,
       language: formData.language,
+      mass_type: formData.mass_type ?? inferMassTypeForTemplate(formData.day_type, dbDayOfWeek, formData.start_time),
       notes: formData.notes ?? null,
     })
     .select("id")
@@ -329,6 +345,7 @@ export async function updateTemplate(
     days_of_week?: number[];  // override for multi-day weekday templates
     start_time: string;
     language: MassLanguage;
+    mass_type?: MassType;
     notes?: string;
     role_configs: { role: string; min_count: number; max_count: number }[];
   }
@@ -338,7 +355,7 @@ export async function updateTemplate(
   // Read existing template to detect changes that need propagation
   const { data: existing } = await supabase
     .from("mass_template")
-    .select("start_time, language")
+    .select("start_time, language, mass_type")
     .eq("id", id)
     .single();
 
@@ -353,6 +370,7 @@ export async function updateTemplate(
       day_of_week: dbDayOfWeek,
       start_time: formData.start_time,
       language: formData.language,
+      mass_type: formData.mass_type ?? inferMassTypeForTemplate(formData.day_type, dbDayOfWeek, formData.start_time),
       notes: formData.notes ?? null,
       updated_at: new Date().toISOString(),
     })
@@ -381,9 +399,11 @@ export async function updateTemplate(
 
   // Propagate start_time and/or language changes to future linked mass_times
   if (existing) {
-    const propagationUpdates: { start_time?: string; language?: MassLanguage } = {};
+    const nextMassType = formData.mass_type ?? inferMassTypeForTemplate(formData.day_type, dbDayOfWeek, formData.start_time);
+    const propagationUpdates: { start_time?: string; language?: MassLanguage; mass_type?: MassType } = {};
     if (existing.start_time !== formData.start_time) propagationUpdates.start_time = formData.start_time;
     if (existing.language !== formData.language) propagationUpdates.language = formData.language;
+    if ((existing as { mass_type?: MassType }).mass_type !== nextMassType) propagationUpdates.mass_type = nextMassType;
 
     if (Object.keys(propagationUpdates).length > 0) {
       const adminClient = createAdminClient();
@@ -428,7 +448,7 @@ export async function createOneOffMass(
   const date = String(formData.get("date") ?? "");
   const startTime = String(formData.get("start_time") ?? "");
   const language = String(formData.get("language") ?? "ENGLISH") as MassLanguage;
-  const massType = String(formData.get("mass_type") ?? "REGULAR") as MassType;
+  const massType = String(formData.get("mass_type") ?? inferMassTypeForDateTime(date, startTime)) as MassType;
   const notes = String(formData.get("notes") ?? "").trim();
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(startTime)) {
@@ -458,7 +478,7 @@ export async function createOneOffMass(
           parish_id: parish.id,
           date,
           season: getLiturgicalSeason(date),
-          is_high_feast: massType === "HOLY_DAY" || massType === "HOLY_DAY_OF_OBLIGATION" || !!holyDayName,
+          is_high_feast: massType === "HOLY_DAY_OF_OBLIGATION" || !!holyDayName,
           is_holy_day_of_obligation: massType === "HOLY_DAY_OF_OBLIGATION" || isHolyDayOfObligation(date),
           feast_name: holyDayName,
           notes: null,
@@ -467,7 +487,7 @@ export async function createOneOffMass(
       .single();
     if (ldError) throw new Error(ldError.message);
     litDate = insertedLitDate;
-  } else if (massType === "HOLY_DAY" || massType === "HOLY_DAY_OF_OBLIGATION") {
+  } else if (massType === "HOLY_DAY_OF_OBLIGATION") {
     const litDateUpdates: Record<string, string | boolean> = { is_high_feast: true };
     if (massType === "HOLY_DAY_OF_OBLIGATION") litDateUpdates.is_holy_day_of_obligation = true;
     if (holyDayName) litDateUpdates.feast_name = holyDayName;
@@ -479,7 +499,7 @@ export async function createOneOffMass(
 
   const timeLabel = formatTimeLabel(startTime);
   const massTypeLabel = MASS_TYPE_LABELS[massType] ?? "Special";
-  const displayName = massType === "REGULAR" ? `${timeLabel} Mass` : `${massTypeLabel} Mass`;
+  const displayName = `${timeLabel} ${massTypeLabel}`;
 
   const { data: massTime, error: mtError } = await supabase
     .from("mass_time")
@@ -488,7 +508,7 @@ export async function createOneOffMass(
       time_label: timeLabel,
       display_name: displayName,
       sort_order: timeSortOrder(startTime),
-      is_special: massType !== "REGULAR",
+      is_special: !["DAILY_MASS", "SUNDAY_MASS", "SATURDAY_VIGIL"].includes(massType),
       template_id: null,
       language,
       status: "SCHEDULED",

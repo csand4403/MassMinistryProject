@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { createOneOffMass } from "@/lib/actions";
+import { inferMassTypeForDateTime } from "@/lib/liturgical-calendar";
 import {
   LANGUAGE_LABELS,
   MASS_TYPE_LABELS,
@@ -28,7 +29,23 @@ const ZERO_COUNTS = Object.fromEntries(
 ) as RoleCounts;
 
 const ROLE_DEFAULTS: Record<MassType, Partial<RoleCounts>> = {
-  REGULAR: {
+  DAILY_MASS: {
+    CELEBRANT: { min: 1, max: 1 },
+    DEACON: { min: 0, max: 1 },
+    LECTOR: { min: 1, max: 2 },
+    EMHC: { min: 1, max: 4 },
+    USHER: { min: 1, max: 4 },
+    ALTAR_SERVER: { min: 0, max: 4 },
+  },
+  SUNDAY_MASS: {
+    CELEBRANT: { min: 1, max: 1 },
+    DEACON: { min: 0, max: 1 },
+    LECTOR: { min: 1, max: 2 },
+    EMHC: { min: 1, max: 4 },
+    USHER: { min: 1, max: 4 },
+    ALTAR_SERVER: { min: 0, max: 4 },
+  },
+  SATURDAY_VIGIL: {
     CELEBRANT: { min: 1, max: 1 },
     DEACON: { min: 0, max: 1 },
     LECTOR: { min: 1, max: 2 },
@@ -47,15 +64,6 @@ const ROLE_DEFAULTS: Record<MassType, Partial<RoleCounts>> = {
     LECTOR: { min: 1, max: 2 },
     ALTAR_SERVER: { min: 0, max: 2 },
   },
-  HOLY_DAY: {
-    CELEBRANT: { min: 1, max: 1 },
-    DEACON: { min: 0, max: 1 },
-    LECTOR: { min: 2, max: 2 },
-    PSALMIST: { min: 1, max: 1 },
-    EMHC: { min: 4, max: 8 },
-    USHER: { min: 4, max: 8 },
-    ALTAR_SERVER: { min: 2, max: 6 },
-  },
   HOLY_DAY_OF_OBLIGATION: {
     CELEBRANT: { min: 1, max: 1 },
     DEACON: { min: 0, max: 1 },
@@ -70,9 +78,23 @@ const ROLE_DEFAULTS: Record<MassType, Partial<RoleCounts>> = {
     LECTOR: { min: 1, max: 2 },
     ALTAR_SERVER: { min: 2, max: 6 },
   },
-  ADORATION: {
-    CELEBRANT: { min: 0, max: 1 },
-    DEACON: { min: 0, max: 1 },
+  BAPTISM_MASS: {
+    CELEBRANT: { min: 1, max: 1 },
+    LECTOR: { min: 1, max: 2 },
+    EMHC: { min: 1, max: 2 },
+  },
+  QUINCEANERA_MASS: {
+    CELEBRANT: { min: 1, max: 1 },
+    LECTOR: { min: 1, max: 2 },
+    EMHC: { min: 1, max: 4 },
+    USHER: { min: 1, max: 4 },
+    ALTAR_SERVER: { min: 0, max: 4 },
+  },
+  MEMORIAL_MASS: {
+    CELEBRANT: { min: 1, max: 1 },
+    LECTOR: { min: 1, max: 2 },
+    EMHC: { min: 1, max: 2 },
+    USHER: { min: 1, max: 2 },
   },
   OTHER: {
     CELEBRANT: { min: 1, max: 1 },
@@ -88,12 +110,13 @@ function countsForType(type: MassType): RoleCounts {
 
 export function AddMassForm({
   date,
-  defaultMassType = "REGULAR",
+  defaultMassType = inferMassTypeForDateTime(date),
 }: {
   date: string;
   defaultMassType?: MassType;
 }) {
   const [massType, setMassType] = useState<MassType>(defaultMassType);
+  const [typeTouched, setTypeTouched] = useState(false);
   const [roleCounts, setRoleCounts] = useState<RoleCounts>(() => countsForType(defaultMassType));
 
   const visibleRoles = useMemo(
@@ -102,8 +125,16 @@ export function AddMassForm({
   );
 
   const updateMassType = (nextType: MassType) => {
+    setTypeTouched(true);
     setMassType(nextType);
     setRoleCounts(countsForType(nextType));
+  };
+
+  const updateStartTime = (startTime: string) => {
+    if (typeTouched) return;
+    const inferred = inferMassTypeForDateTime(date, startTime);
+    setMassType(inferred);
+    setRoleCounts(countsForType(inferred));
   };
 
   const updateRole = (role: MinisterRole, field: "min" | "max", value: number) => {
@@ -134,6 +165,7 @@ export function AddMassForm({
               name="start_time"
               type="time"
               required
+              onChange={(event) => updateStartTime(event.target.value)}
               className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
             />
           </label>

@@ -97,34 +97,43 @@ export const MASS_STATUS_LABELS: Record<MassStatus, string> = {
 };
 
 export type MassType =
-  | "REGULAR"
+  | "DAILY_MASS"
+  | "SUNDAY_MASS"
+  | "SATURDAY_VIGIL"
   | "FUNERAL"
   | "WEDDING"
-  | "HOLY_DAY"
   | "HOLY_DAY_OF_OBLIGATION"
   | "SCHOOL_MASS"
-  | "ADORATION"
+  | "BAPTISM_MASS"
+  | "QUINCEANERA_MASS"
+  | "MEMORIAL_MASS"
   | "OTHER";
 
 export const MASS_TYPE_LABELS: Record<MassType, string> = {
-  REGULAR: "Regular",
-  FUNERAL: "Funeral",
-  WEDDING: "Wedding",
-  HOLY_DAY: "Holy Day",
+  DAILY_MASS: "Daily Mass",
+  SUNDAY_MASS: "Sunday Mass",
+  SATURDAY_VIGIL: "Saturday Vigil",
+  FUNERAL: "Funeral Mass",
+  WEDDING: "Wedding Mass",
   HOLY_DAY_OF_OBLIGATION: "Holy Day of Obligation",
   SCHOOL_MASS: "School Mass",
-  ADORATION: "Adoration",
-  OTHER: "Other",
+  BAPTISM_MASS: "Baptism Mass",
+  QUINCEANERA_MASS: "Quinceanera Mass",
+  MEMORIAL_MASS: "Memorial Mass",
+  OTHER: "Other Mass",
 };
 
 export const MASS_TYPE_OPTIONS: MassType[] = [
-  "REGULAR",
+  "DAILY_MASS",
+  "SUNDAY_MASS",
+  "SATURDAY_VIGIL",
   "FUNERAL",
   "WEDDING",
-  "HOLY_DAY",
   "HOLY_DAY_OF_OBLIGATION",
   "SCHOOL_MASS",
-  "ADORATION",
+  "BAPTISM_MASS",
+  "QUINCEANERA_MASS",
+  "MEMORIAL_MASS",
   "OTHER",
 ];
 
@@ -366,6 +375,7 @@ export interface MassTemplate {
   day_of_week: number | number[] | null;  // may be int (pre-migration) or int[] (post-migration)
   start_time: string;
   language: MassLanguage;
+  mass_type: MassType;
   notes: string | null;
   created_at: string;
   updated_at: string;

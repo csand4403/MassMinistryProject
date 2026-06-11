@@ -7,6 +7,7 @@ import { deleteTemplate } from "@/lib/actions";
 import {
   LANGUAGE_LABELS,
   LANGUAGE_SHORT,
+  MASS_TYPE_LABELS,
   ROLE_SHORT_LABELS,
   daysOfWeekLabel,
   normalizeDaysOfWeek,
@@ -137,6 +138,11 @@ function TemplateCard({ template: t }: { template: MassTemplate }) {
             <span className="text-xs rounded-full px-2 py-0.5 bg-parish-100 text-parish-700 font-medium">
               {LANGUAGE_SHORT[t.language]}
             </span>
+            {t.mass_type && (
+              <span className="text-xs rounded-full px-2 py-0.5 bg-slate-100 text-slate-600 font-medium">
+                {MASS_TYPE_LABELS[t.mass_type]}
+              </span>
+            )}
           </div>
           <p className="text-sm text-slate-500 mt-0.5">{displayTime} · {LANGUAGE_LABELS[t.language]}</p>
 

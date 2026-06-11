@@ -67,6 +67,7 @@ export default async function MassDetailPage({ params }: PageProps) {
 
   const { staffing_status } = massTime;
   const isCancelled = massTime.status === "CANCELLED";
+  const isBaselineMass = ["DAILY_MASS", "SUNDAY_MASS", "SATURDAY_VIGIL"].includes(massTime.mass_type);
 
   // Count checked-in vs total assigned (excluding absent)
   const activeAssignments = massTime.assignments.filter(
@@ -98,8 +99,13 @@ export default async function MassDetailPage({ params }: PageProps) {
             </h1>
             <p className="text-sm text-slate-500 mt-0.5">
               {formatDate(date)}
-              {massTime.mass_type !== "REGULAR" && (
-                <span className="ml-2 rounded bg-parish-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-parish-700">
+              {massTime.mass_type && (
+                <span className={cn(
+                  "ml-2 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                  isBaselineMass
+                    ? "bg-slate-50 text-slate-500"
+                    : "bg-parish-50 text-parish-700"
+                )}>
                   {MASS_TYPE_LABELS[massTime.mass_type]}
                 </span>
               )}

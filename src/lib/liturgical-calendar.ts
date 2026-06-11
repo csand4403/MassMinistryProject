@@ -106,21 +106,55 @@ export function timeSortOrder(startTime: string): number {
 }
 
 export function getHolyDayOfObligationName(dateStr: string): string | null {
-  const [, month, day] = dateStr.split("-").map(Number);
-  const fixedHolyDays: Record<string, string> = {
-    "01-01": "Solemnity of Mary, Mother of God",
-    "08-15": "Assumption of the Blessed Virgin Mary",
-    "11-01": "All Saints",
-    "12-08": "Immaculate Conception",
-    "12-25": "Christmas",
-  };
-  return fixedHolyDays[`${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`] ?? null;
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const dow = dayOfWeekForDate(dateStr);
+  const mmdd = `${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+  if (mmdd === "12-25") return "Christmas";
+
+  // In the United States, Jan 1, Aug 15, and Nov 1 are not obligatory when
+  // they fall on Saturday or Monday.
+  if (dow !== 1 && dow !== 6) {
+    if (mmdd === "01-01") return "Solemnity of Mary, Mother of God";
+    if (mmdd === "08-15") return "Assumption of the Blessed Virgin Mary";
+    if (mmdd === "11-01") return "All Saints";
+  }
+
+  if (mmdd === "12-08") return "Immaculate Conception";
+
+  const dec8 = new Date(year, 11, 8);
+  if (mmdd === "12-09" && dec8.getDay() === 0) {
+    return "Immaculate Conception";
+  }
+
+  return null;
 }
 
 export function isHolyDayOfObligation(dateStr: string): boolean {
   return getHolyDayOfObligationName(dateStr) !== null;
 }
 
-export function massTypeForDate(dateStr: string): MassType {
-  return isHolyDayOfObligation(dateStr) ? "HOLY_DAY_OF_OBLIGATION" : "REGULAR";
+export function dayOfWeekForDate(dateStr: string): number {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  return new Date(year, month - 1, day).getDay();
+}
+
+function minutesFromTime(startTime: string): number | null {
+  if (!/^\d{2}:\d{2}$/.test(startTime)) return null;
+  const [hStr, mStr] = startTime.split(":");
+  return parseInt(hStr, 10) * 60 + parseInt(mStr, 10);
+}
+
+export function inferMassTypeForDateTime(dateStr: string, startTime?: string): MassType {
+  if (isHolyDayOfObligation(dateStr)) return "HOLY_DAY_OF_OBLIGATION";
+
+  const dow = dayOfWeekForDate(dateStr);
+  if (dow === 0) return "SUNDAY_MASS";
+
+  const minutes = startTime ? minutesFromTime(startTime) : null;
+  if (dow === 6 && minutes !== null && minutes >= 16 * 60) {
+    return "SATURDAY_VIGIL";
+  }
+
+  return "DAILY_MASS";
 }

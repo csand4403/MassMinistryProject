@@ -7,7 +7,7 @@ import { MassCard } from "@/components/mass/MassCard";
 import { AddMassForm } from "@/components/mass/AddMassForm";
 import { formatDate } from "@/lib/utils";
 import { SEASON_LABELS } from "@/types";
-import { massTypeForDate } from "@/lib/liturgical-calendar";
+import { inferMassTypeForDateTime } from "@/lib/liturgical-calendar";
 import { STATUS_BADGE_CLASSES, STATUS_DOT_CLASSES, STATUS_LABELS } from "@/lib/staffing";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +31,7 @@ export default async function MassDayPage({ params }: PageProps) {
         <BackLink />
         <div className="mt-4 mb-5 flex flex-wrap items-start justify-between gap-3">
           <h1 className="text-2xl font-bold text-navy-900">{formatDate(date)}</h1>
-          <AddMassForm date={date} defaultMassType={massTypeForDate(date)} />
+          <AddMassForm date={date} defaultMassType={inferMassTypeForDateTime(date)} />
         </div>
         <div className="mt-8 rounded-xl border-2 border-dashed border-slate-200 p-12 text-center text-slate-400">
           <p className="text-lg font-medium">No Mass times scheduled for this date.</p>
@@ -59,7 +59,7 @@ export default async function MassDayPage({ params }: PageProps) {
           {/* Liturgical season chip */}
           <SeasonChip season={season} />
           </div>
-          <AddMassForm date={date} defaultMassType={massTypeForDate(date)} />
+          <AddMassForm date={date} defaultMassType={inferMassTypeForDateTime(date)} />
         </div>
 
         {/* Overall day status */}

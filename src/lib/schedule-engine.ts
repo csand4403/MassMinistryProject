@@ -3,9 +3,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { MassLanguage } from "@/types";
-import { normalizeDaysOfWeek } from "@/types";
-import { getLiturgicalSeason, formatTimeLabel, timeSortOrder } from "./liturgical-calendar";
+import type { MassLanguage, MassType } from "@/types";
+import { MASS_TYPE_LABELS, normalizeDaysOfWeek } from "@/types";
+import { getHolyDayOfObligationName, getLiturgicalSeason, formatTimeLabel, inferMassTypeForDateTime, timeSortOrder } from "./liturgical-calendar";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -41,6 +41,11 @@ function addDaysToDate(d: Date, n: number): Date {
   return result;
 }
 
+function displayNameForMassType(timeLabel: string, massType: MassType): string {
+  const label = MASS_TYPE_LABELS[massType] ?? "Mass";
+  return `${timeLabel} ${label}`;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -65,7 +70,7 @@ export async function generateMassTimesForTemplate(
   // Fetch the template
   const { data: template, error: tErr } = await supabase
     .from("mass_template")
-    .select("id, day_type, day_of_week, start_time, language")
+    .select("id, day_type, day_of_week, start_time, language, mass_type")
     .eq("id", templateId)
     .single();
   if (tErr || !template) return result;
@@ -92,33 +97,43 @@ export async function generateMassTimesForTemplate(
   // ── Ensure liturgical_date rows exist for every target date ────────────────
   const { data: existingLitDates } = await supabase
     .from("liturgical_date")
-    .select("id, date")
+    .select("id, date, is_holy_day_of_obligation")
     .eq("parish_id", parishId)
     .in("date", targetDates);
 
   const litDateMap = new Map<string, string>( // date → id
     (existingLitDates ?? []).map((ld: { id: string; date: string }) => [ld.date, ld.id])
   );
+  const holyDayMap = new Map<string, boolean>(
+    (existingLitDates ?? []).map((ld: { date: string; is_holy_day_of_obligation: boolean }) => [
+      ld.date,
+      ld.is_holy_day_of_obligation,
+    ])
+  );
 
   const missingDates = targetDates.filter((d) => !litDateMap.has(d));
   if (missingDates.length > 0) {
-    const rows = missingDates.map((dateStr) => ({
-      parish_id: parishId,
-      date: dateStr,
-      season: getLiturgicalSeason(dateStr),
-      is_high_feast: false,
-      is_holy_day_of_obligation: false,
-      feast_name: null,
-      notes: null,
-    }));
+    const rows = missingDates.map((dateStr) => {
+      const holyDayName = getHolyDayOfObligationName(dateStr);
+      return {
+        parish_id: parishId,
+        date: dateStr,
+        season: getLiturgicalSeason(dateStr),
+        is_high_feast: !!holyDayName,
+        is_holy_day_of_obligation: !!holyDayName,
+        feast_name: holyDayName,
+        notes: null,
+      };
+    });
 
     const { data: newLitDates } = await supabase
       .from("liturgical_date")
       .upsert(rows, { onConflict: "parish_id,date", ignoreDuplicates: true })
-      .select("id, date");
+      .select("id, date, is_holy_day_of_obligation");
 
     for (const ld of newLitDates ?? []) {
       litDateMap.set(ld.date, ld.id);
+      holyDayMap.set(ld.date, ld.is_holy_day_of_obligation);
     }
     result.liturgicalDatesCreated = missingDates.length;
   }
@@ -128,10 +143,13 @@ export async function generateMassTimesForTemplate(
   if (stillMissing.length > 0) {
     const { data: refetched } = await supabase
       .from("liturgical_date")
-      .select("id, date")
+      .select("id, date, is_holy_day_of_obligation")
       .eq("parish_id", parishId)
       .in("date", stillMissing);
-    for (const ld of refetched ?? []) litDateMap.set(ld.date, ld.id);
+    for (const ld of refetched ?? []) {
+      litDateMap.set(ld.date, ld.id);
+      holyDayMap.set(ld.date, ld.is_holy_day_of_obligation);
+    }
   }
 
   // ── Ensure mass_time rows exist for every target date + time ───────────────
@@ -166,14 +184,19 @@ export async function generateMassTimesForTemplate(
       }
       // If already linked to another template, leave it — no silent override.
     } else {
+      const inferredType = inferMassTypeForDateTime(dateStr, template.start_time);
+      const massType = inferredType === "HOLY_DAY_OF_OBLIGATION" || holyDayMap.get(dateStr)
+        ? "HOLY_DAY_OF_OBLIGATION"
+        : ((template.mass_type as MassType | null) ?? inferredType);
       toInsert.push({
         liturgical_date_id: litDateId,
         time_label: timeLabel,
-        display_name: `${timeLabel} Mass`,
+        display_name: displayNameForMassType(timeLabel, massType),
         sort_order: sortOrder,
-        is_special: false,
+        is_special: !["DAILY_MASS", "SUNDAY_MASS", "SATURDAY_VIGIL"].includes(massType),
         template_id: templateId,
         language: template.language,
+        mass_type: massType,
       });
     }
   }
@@ -207,9 +230,10 @@ export async function propagateTemplateUpdates(
   updates: {
     start_time?: string;
     language?: MassLanguage;
+    mass_type?: MassType;
   }
 ): Promise<void> {
-  if (!updates.start_time && !updates.language) return;
+  if (!updates.start_time && !updates.language && !updates.mass_type) return;
 
   const todayStr = dateStrFromDate(new Date());
 
@@ -227,11 +251,32 @@ export async function propagateTemplateUpdates(
   if (updates.start_time) {
     const newLabel = formatTimeLabel(updates.start_time);
     massTimeUpdates.time_label = newLabel;
-    massTimeUpdates.display_name = `${newLabel} Mass`;
+    if (updates.mass_type) {
+      massTimeUpdates.display_name = displayNameForMassType(newLabel, updates.mass_type);
+    } else {
+      massTimeUpdates.display_name = `${newLabel} Mass`;
+    }
     massTimeUpdates.sort_order = timeSortOrder(updates.start_time);
   }
   if (updates.language) {
     massTimeUpdates.language = updates.language;
+  }
+  if (updates.mass_type) {
+    massTimeUpdates.mass_type = updates.mass_type;
+    massTimeUpdates.is_special = !["DAILY_MASS", "SUNDAY_MASS", "SATURDAY_VIGIL"].includes(updates.mass_type);
+    if (!updates.start_time) {
+      const { data: template } = await supabase
+        .from("mass_template")
+        .select("start_time")
+        .eq("id", templateId)
+        .single();
+      if (template?.start_time) {
+        massTimeUpdates.display_name = displayNameForMassType(
+          formatTimeLabel(template.start_time),
+          updates.mass_type
+        );
+      }
+    }
   }
 
   // Update future linked mass_times in chunks

@@ -8,10 +8,12 @@ import {
   ROLE_LABELS,
   LANGUAGE_LABELS,
   ROLE_DISPLAY_ORDER,
+  MASS_TYPE_LABELS,
+  MASS_TYPE_OPTIONS,
   normalizeDaysOfWeek,
 } from "@/types";
 import { normalizeRole } from "@/lib/staffing";
-import type { MassTemplate, MinisterRole, MassDayType, MassLanguage } from "@/types";
+import type { MassTemplate, MinisterRole, MassDayType, MassLanguage, MassType } from "@/types";
 
 const ALL_ROLES = ROLE_DISPLAY_ORDER;
 
@@ -69,6 +71,14 @@ function templateToForm(template: MassTemplate): { category: DayCategory; daysOf
   return { category: "WEEKDAY", daysOfWeek: days };
 }
 
+function inferTemplateMassType(category: DayCategory, daysOfWeek: number[], startTime: string): MassType {
+  if (category === "SUNDAY") return "SUNDAY_MASS";
+  if (category === "HOLY_DAY") return "HOLY_DAY_OF_OBLIGATION";
+  if (category === "SCHOOL_MASS") return "SCHOOL_MASS";
+  if (daysOfWeek.length === 1 && daysOfWeek[0] === 6 && startTime >= "16:00") return "SATURDAY_VIGIL";
+  return "DAILY_MASS";
+}
+
 interface TemplateFormProps {
   template?: MassTemplate;
 }
@@ -85,6 +95,10 @@ export function TemplateForm({ template }: TemplateFormProps) {
   const [daysOfWeek, setDaysOfWeek] = useState<number[]>(initial.daysOfWeek);
   const [startTime, setStartTime] = useState(template?.start_time ?? "08:00");
   const [language, setLanguage] = useState<MassLanguage>(template?.language ?? "ENGLISH");
+  const [massType, setMassType] = useState<MassType>(
+    template?.mass_type ?? inferTemplateMassType(initial.category, initial.daysOfWeek, template?.start_time ?? "08:00")
+  );
+  const [massTypeTouched, setMassTypeTouched] = useState(!!template?.mass_type);
   const [notes, setNotes] = useState(template?.notes ?? "");
   const [roleConfigs, setRoleConfigs] = useState<RoleConfig[]>(defaultRoleConfigs(template));
 
@@ -98,6 +112,11 @@ export function TemplateForm({ template }: TemplateFormProps) {
     setRoleConfigs((prev) =>
       prev.map((rc) => (rc.role === role ? { ...rc, [field]: Math.max(0, value) } : rc))
     );
+  };
+
+  const updateInferredMassType = (nextCategory: DayCategory, nextDays: number[], nextStartTime: string) => {
+    if (massTypeTouched) return;
+    setMassType(inferTemplateMassType(nextCategory, nextDays, nextStartTime));
   };
 
   // Map category back to a MassDayType for the action (use first selected day or Monday)
@@ -137,6 +156,7 @@ export function TemplateForm({ template }: TemplateFormProps) {
         days_of_week: category === "WEEKDAY" ? daysOfWeek : undefined,
         start_time: startTime,
         language,
+        mass_type: massType,
         notes: notes.trim() || undefined,
         role_configs: roleConfigs,
       };
@@ -175,8 +195,10 @@ export function TemplateForm({ template }: TemplateFormProps) {
             <select
               value={category}
               onChange={(e) => {
-                setCategory(e.target.value as DayCategory);
+                const nextCategory = e.target.value as DayCategory;
+                setCategory(nextCategory);
                 setDaysOfWeek([]);
+                updateInferredMassType(nextCategory, [], startTime);
               }}
               className={inputClass}
             >
@@ -190,7 +212,10 @@ export function TemplateForm({ template }: TemplateFormProps) {
             <input
               type="time"
               value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
+              onChange={(e) => {
+                setStartTime(e.target.value);
+                updateInferredMassType(category, daysOfWeek, e.target.value);
+              }}
               className={inputClass}
             />
           </Field>
@@ -204,7 +229,13 @@ export function TemplateForm({ template }: TemplateFormProps) {
                 <button
                   key={dow}
                   type="button"
-                  onClick={() => toggleDow(dow)}
+                  onClick={() => {
+                    const nextDays = daysOfWeek.includes(dow)
+                      ? daysOfWeek.filter((d) => d !== dow)
+                      : [...daysOfWeek, dow].sort();
+                    setDaysOfWeek(nextDays);
+                    updateInferredMassType(category, nextDays, startTime);
+                  }}
                   className={cn(
                     "px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors",
                     daysOfWeek.includes(dow)
@@ -223,6 +254,21 @@ export function TemplateForm({ template }: TemplateFormProps) {
             )}
           </Field>
         )}
+
+        <Field label="Mass Type" required>
+          <select
+            value={massType}
+            onChange={(e) => {
+              setMassTypeTouched(true);
+              setMassType(e.target.value as MassType);
+            }}
+            className={inputClass}
+          >
+            {MASS_TYPE_OPTIONS.map((type) => (
+              <option key={type} value={type}>{MASS_TYPE_LABELS[type]}</option>
+            ))}
+          </select>
+        </Field>
 
         <Field label="Language" required>
           <select
