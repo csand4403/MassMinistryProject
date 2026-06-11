@@ -172,6 +172,8 @@ function StatusDot({ status }: { status: string }) {
   const colors: Record<string, string> = {
     SCHEDULED:  "bg-slate-400",
     CONFIRMED:  "bg-blue-500",
+    PENDING:    "bg-amber-500",
+    DECLINED:   "bg-red-500",
     CHECKED_IN: "bg-green-500",
     ABSENT:     "bg-red-500",
   };

@@ -4,6 +4,7 @@ import { getMinisters, getTemplates } from "@/lib/queries";
 import { TemplateList } from "@/components/settings/TemplateList";
 import { MinisterImportFlow } from "@/components/ministers/MinisterImportFlow";
 import { cn } from "@/lib/utils";
+import { requireRole } from "@/lib/auth";
 
 export const revalidate = 0;
 
@@ -16,11 +17,16 @@ const SETTINGS_SECTIONS = [
   { key: "ministers", label: "Ministers" },
   { key: "parish-profile", label: "Parish Profile" },
   { key: "notifications", label: "Notifications" },
+  { key: "users-roles", label: "Users & Roles" },
 ];
 
 export default async function SettingsPage({ searchParams }: PageProps) {
+  const appUser = await requireRole(["ADMIN", "SCHEDULER"]);
   const params = await searchParams;
-  const selectedSection = SETTINGS_SECTIONS.some((section) => section.key === params.section)
+  const visibleSections = appUser.role === "SCHEDULER"
+    ? SETTINGS_SECTIONS.filter((section) => section.key === "templates" || section.key === "ministers")
+    : SETTINGS_SECTIONS;
+  const selectedSection = visibleSections.some((section) => section.key === params.section)
     ? params.section!
     : "templates";
 
@@ -41,7 +47,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
 
       <div className="grid gap-6 md:grid-cols-[180px_1fr]">
         <aside className="space-y-1">
-          {SETTINGS_SECTIONS.map((section) => (
+          {visibleSections.map((section) => (
             <Link
               key={section.key}
               href={section.key === "templates" ? "/settings" : `/settings?section=${section.key}`}
@@ -96,6 +102,7 @@ export default async function SettingsPage({ searchParams }: PageProps) {
 
         {selectedSection === "parish-profile" && <ComingSoon title="Parish Profile" />}
         {selectedSection === "notifications" && <ComingSoon title="Notifications" />}
+        {selectedSection === "users-roles" && <ComingSoon title="Users & Roles" />}
       </div>
     </div>
   );

@@ -4,18 +4,32 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { SignOutButton } from "@/components/auth/SignOutButton";
+import type { AppUser } from "@/lib/auth";
 
 const NAV_ITEMS = [
   { href: "/", label: "Calendar", icon: CalendarIcon },
+  { href: "/my-schedule", label: "My Schedule", icon: CalendarIcon },
   { href: "/ministers", label: "Ministers", icon: PeopleIcon },
   { href: "/reports", label: "Reports", icon: ReportsIcon },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({ children, appUser }: { children: React.ReactNode; appUser: AppUser | null }) {
+  const pathname = usePathname();
+  const isLogin = pathname === "/login";
+
+  if (isLogin) {
+    return (
+      <div className="min-h-screen" style={{ backgroundColor: "#f8f7f5" }}>
+        <main className="mx-auto w-full max-w-5xl px-4 py-6">{children}</main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: "#f8f7f5" }}>
-      <Header />
+      <Header appUser={appUser} />
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-6">
         {children}
       </main>
@@ -26,8 +40,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Header() {
+function Header({ appUser }: { appUser: AppUser | null }) {
   const pathname = usePathname();
+  const navItems = NAV_ITEMS.filter((item) => {
+    if (!appUser) return false;
+    if (appUser.role === "MINISTER") return item.href === "/my-schedule";
+    if (item.href === "/my-schedule") return false;
+    if (appUser.role === "SCHEDULER") return item.href !== "/reports" && item.href !== "/ministers";
+    return true;
+  });
 
   return (
     <header style={{ backgroundColor: "#286b73" }} className="text-white shadow-md">
@@ -53,7 +74,7 @@ function Header() {
         </Link>
 
         <nav className="flex items-center gap-1">
-          {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+          {navItems.map(({ href, label, icon: Icon }) => {
             const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
             return (
               <Link
@@ -71,6 +92,7 @@ function Header() {
               </Link>
             );
           })}
+          {appUser && <SignOutButton />}
         </nav>
       </div>
     </header>

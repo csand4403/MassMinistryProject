@@ -51,7 +51,7 @@ export default async function MassDetailPage({ params }: PageProps) {
   // For Quick Assign (empty slots), exclude ministers already serving at this Mass
   const assignedMinisterIds = new Set(
     massTime.assignments
-      .filter((a) => a.status !== "ABSENT")
+      .filter((a) => a.status !== "ABSENT" && a.status !== "DECLINED")
       .map((a) => a.minister_id)
   );
 
@@ -72,7 +72,7 @@ export default async function MassDetailPage({ params }: PageProps) {
 
   // Count checked-in vs total assigned (excluding absent)
   const activeAssignments = massTime.assignments.filter(
-    (a) => a.status !== "ABSENT"
+    (a) => a.status !== "ABSENT" && a.status !== "DECLINED"
   );
   const checkedInCount = activeAssignments.filter(
     (a) => a.status === "CHECKED_IN" || checkInMap.has(a.id)

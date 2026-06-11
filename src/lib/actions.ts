@@ -106,7 +106,7 @@ export async function createAssignment(
       minister_id: ministerId,
       role: dbRole,
       reading_label: readingLabel ?? null,
-      status: "SCHEDULED",
+      status: "PENDING",
     })
     .select("id")
     .single();
@@ -125,7 +125,7 @@ export async function createMultipleAssignments(
   if (ministerIds.length === 0) return { success: true };
   const supabase = await createClient();
 
-  let rows: { mass_time_id: string; minister_id: string; role: string; status: string; reading_label: null }[];
+  let rows: { mass_time_id: string; minister_id: string; role: string; status: AssignmentStatus; reading_label: null }[];
 
   if (role === "LECTOR") {
     const { data: existing } = await supabase
@@ -139,7 +139,7 @@ export async function createMultipleAssignments(
       mass_time_id: massTimeId,
       minister_id: ministerId,
       role: available[i],
-      status: "SCHEDULED",
+      status: "PENDING",
       reading_label: null,
     }));
   } else {
@@ -147,7 +147,7 @@ export async function createMultipleAssignments(
       mass_time_id: massTimeId,
       minister_id: ministerId,
       role,
-      status: "SCHEDULED",
+      status: "PENDING",
       reading_label: null,
     }));
   }
@@ -190,6 +190,41 @@ export async function updateReadingLabel(
 
   if (error) return { success: false, error: error.message };
 
+  revalidatePath("/", "layout");
+  return { success: true };
+}
+
+export async function updateOwnAssignmentResponse(
+  assignmentId: string,
+  status: "CONFIRMED" | "DECLINED"
+): Promise<{ success: boolean; error?: string }> {
+  const { requireAppUser } = await import("@/lib/auth");
+  const appUser = await requireAppUser();
+
+  if (appUser.role !== "MINISTER" || !appUser.minister_id) {
+    return { success: false, error: "Only linked ministers can respond to assignments." };
+  }
+
+  const supabase = await createClient();
+  const { data: assignment, error: lookupError } = await supabase
+    .from("assignment")
+    .select("id, minister_id")
+    .eq("id", assignmentId)
+    .maybeSingle();
+
+  if (lookupError) return { success: false, error: lookupError.message };
+  if (!assignment || assignment.minister_id !== appUser.minister_id) {
+    return { success: false, error: "Assignment not found for this minister." };
+  }
+
+  const { error } = await supabase
+    .from("assignment")
+    .update({ status })
+    .eq("id", assignmentId);
+
+  if (error) return { success: false, error: error.message };
+
+  revalidatePath("/my-schedule");
   revalidatePath("/", "layout");
   return { success: true };
 }

@@ -604,7 +604,7 @@ export async function getUpcomingAlerts(
 
     if (status === "RED" || status === "YELLOW") {
       const activeRoles = new Set(
-        mtAssignments.filter((a) => a.status !== "ABSENT").map((a) => a.role)
+        mtAssignments.filter((a) => a.status !== "ABSENT" && a.status !== "DECLINED").map((a) => a.role)
       );
       staffing.push({
         date,
@@ -618,7 +618,7 @@ export async function getUpcomingAlerts(
 
     // Check for visiting celebrant letter warnings
     for (const a of mtAssignments) {
-      if (a.status === "ABSENT") continue;
+      if (a.status === "ABSENT" || a.status === "DECLINED") continue;
       if (a.role !== "CELEBRANT") continue;
       const m = a.minister;
       if (!m || m.priest_type !== "VISITING_CELEBRANT") continue;

@@ -40,7 +40,7 @@ export default async function PrintRosterPage({ params }: PageProps) {
     byRole.set(
       role,
       massTime.assignments.filter(
-        (a) => a.role === role && a.status !== "ABSENT"
+        (a) => a.role === role && a.status !== "ABSENT" && a.status !== "DECLINED"
       )
     );
   }

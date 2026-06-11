@@ -297,7 +297,9 @@ export const SEASON_COLORS: Record<LiturgicalSeason, string> = {
 // ---------------------------------------------------------------------------
 export type AssignmentStatus =
   | "SCHEDULED"
+  | "PENDING"
   | "CONFIRMED"
+  | "DECLINED"
   | "CHECKED_IN"
   | "ABSENT";
 

@@ -34,7 +34,7 @@ export function computeStaffingStatus(
   assignments: Pick<Assignment, "role" | "status">[],
   templateRoles?: Pick<MassTemplateRoleConfig | MassTimeRoleConfig, "role" | "min_count">[]
 ): StaffingStatus {
-  const active = assignments.filter((a) => a.status !== "ABSENT");
+  const active = assignments.filter((a) => a.status !== "ABSENT" && a.status !== "DECLINED");
 
   if (templateRoles && templateRoles.length > 0) {
     // Count active assignments per role
