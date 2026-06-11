@@ -270,13 +270,35 @@ export interface MinisterImportRow {
   notification_preference: "email" | "sms" | "both" | "none";
   roles: MinisterRole[];
   notes?: string;
+  priest_type?: PriestType | null;
+  minister_diocese?: string;
+  letter_of_suitability?: boolean | null;
+  letter_expiration_date?: string | null;
   duplicate_id?: string;
   decision?: "skip" | "add" | "merge";
 }
 
+export interface MinisterImportReviewItem {
+  row: number;
+  minister_id?: string;
+  name: string;
+  changes?: string[];
+  reason?: string;
+}
+
+export interface MinisterImportReview {
+  id: string;
+  imported_at: string;
+  file_name?: string;
+  added: MinisterImportReviewItem[];
+  merged: MinisterImportReviewItem[];
+  skipped: MinisterImportReviewItem[];
+}
+
 export async function bulkImportMinisters(
-  rows: MinisterImportRow[]
-): Promise<{ success: boolean; error?: string; added: number; merged: number; skipped: number }> {
+  rows: MinisterImportRow[],
+  fileName?: string
+): Promise<{ success: boolean; error?: string; review?: MinisterImportReview; added: number; merged: number; skipped: number }> {
   const supabase = createAdminClient();
 
   const { data: parish, error: pError } = await supabase
@@ -285,24 +307,33 @@ export async function bulkImportMinisters(
     .single();
   if (pError) return { success: false, error: pError.message, added: 0, merged: 0, skipped: 0 };
 
-  const cleanRows = rows.map((row) => ({
+  const cleanRows = rows.map((row, index) => ({
     ...row,
+    row_number: index + 2,
     first_name: row.first_name.trim(),
     last_name: row.last_name.trim(),
     email: row.email?.trim() || undefined,
     phone: row.phone?.trim() || undefined,
     notes: row.notes?.trim() || undefined,
+    minister_diocese: row.minister_diocese?.trim() || undefined,
     roles: Array.from(new Set(row.roles)),
     notification_preference: row.notification_preference ?? "email",
   }));
 
-  let added = 0;
-  let merged = 0;
-  let skipped = 0;
+  const review: MinisterImportReview = {
+    id: `import-${Date.now()}`,
+    imported_at: new Date().toISOString(),
+    file_name: fileName,
+    added: [],
+    merged: [],
+    skipped: [],
+  };
 
   for (const row of cleanRows) {
+    const name = `${row.first_name} ${row.last_name}`.trim() || `Row ${row.row_number}`;
+
     if (!row.first_name || !row.last_name) {
-      skipped += 1;
+      review.skipped.push({ row: row.row_number, name, reason: "First name and last name are required." });
       continue;
     }
 
@@ -312,34 +343,57 @@ export async function bulkImportMinisters(
         .select("*")
         .eq("id", row.duplicate_id)
         .single();
-      if (existingError) return { success: false, error: existingError.message, added, merged, skipped };
+      if (existingError) return { success: false, error: existingError.message, ...reviewCounts(review), review };
 
       const minister = existing as Minister;
       const mergedRoles = Array.from(new Set([...(minister.roles ?? []), ...row.roles]));
+      const changes: string[] = [];
+      const roleChanges = row.roles
+        .filter((role) => !(minister.roles ?? []).includes(role))
+        .map((role) => `added role: ${roleLabelForReview(role)}`);
+      changes.push(...roleChanges);
+
       const updates = {
-        email: minister.email || row.email || null,
-        phone: minister.phone || row.phone || null,
-        notification_preference: minister.notification_preference || row.notification_preference,
+        email: row.email || minister.email || null,
+        phone: row.phone || minister.phone || null,
+        notification_preference: row.notification_preference || minister.notification_preference,
         roles: mergedRoles,
-        notes: minister.notes || row.notes || null,
+        notes: row.notes || minister.notes || null,
+        priest_type: row.priest_type ?? minister.priest_type ?? null,
+        minister_diocese: row.minister_diocese || minister.minister_diocese || null,
+        letter_of_suitability: row.letter_of_suitability ?? minister.letter_of_suitability ?? null,
+        letter_expiration_date: row.letter_expiration_date || minister.letter_expiration_date || null,
       };
+      if ((minister.email ?? "") !== (updates.email ?? "")) changes.push("updated email");
+      if ((minister.phone ?? "") !== (updates.phone ?? "")) changes.push("updated phone");
+      if (minister.notification_preference !== updates.notification_preference) changes.push("updated notification preference");
+      if ((minister.notes ?? "") !== (updates.notes ?? "")) changes.push("updated notes");
+      if ((minister.priest_type ?? "") !== (updates.priest_type ?? "")) changes.push("updated priest type");
+      if ((minister.minister_diocese ?? "") !== (updates.minister_diocese ?? "")) changes.push("updated diocese");
+      if ((minister.letter_of_suitability ?? null) !== (updates.letter_of_suitability ?? null)) changes.push("updated letter of suitability");
+      if ((minister.letter_expiration_date ?? "") !== (updates.letter_expiration_date ?? "")) changes.push("updated letter expiration");
 
       const { error: updateError } = await supabase
         .from("minister")
         .update(updates)
         .eq("id", row.duplicate_id);
-      if (updateError) return { success: false, error: updateError.message, added, merged, skipped };
+      if (updateError) return { success: false, error: updateError.message, ...reviewCounts(review), review };
 
-      merged += 1;
+      review.merged.push({
+        row: row.row_number,
+        minister_id: row.duplicate_id,
+        name,
+        changes: changes.length > 0 ? changes : ["matched duplicate; no field changes"],
+      });
       continue;
     }
 
     if (row.duplicate_id && row.decision !== "add") {
-      skipped += 1;
+      review.skipped.push({ row: row.row_number, minister_id: row.duplicate_id, name, reason: "Skipped duplicate by admin choice." });
       continue;
     }
 
-    const { error: insertError } = await supabase.from("minister").insert({
+    const { data: inserted, error: insertError } = await supabase.from("minister").insert({
       parish_id: parish.id,
       first_name: row.first_name,
       last_name: row.last_name,
@@ -348,16 +402,36 @@ export async function bulkImportMinisters(
       notification_preference: row.notification_preference,
       roles: row.roles,
       notes: row.notes ?? null,
+      priest_type: row.priest_type ?? null,
+      minister_diocese: row.minister_diocese ?? null,
+      letter_of_suitability: row.letter_of_suitability ?? null,
+      letter_expiration_date: row.letter_expiration_date ?? null,
       is_active: true,
-    });
-    if (insertError) return { success: false, error: insertError.message, added, merged, skipped };
+    }).select("id").single();
+    if (insertError) return { success: false, error: insertError.message, ...reviewCounts(review), review };
 
-    added += 1;
+    review.added.push({ row: row.row_number, minister_id: inserted.id, name });
   }
 
   revalidatePath("/ministers");
   revalidatePath("/settings");
-  return { success: true, added, merged, skipped };
+  return { success: true, ...reviewCounts(review), review };
+}
+
+function reviewCounts(review: MinisterImportReview) {
+  return {
+    added: review.added.length,
+    merged: review.merged.length,
+    skipped: review.skipped.length,
+  };
+}
+
+function roleLabelForReview(role: MinisterRole) {
+  return role
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }
 
 // ---------------------------------------------------------------------------

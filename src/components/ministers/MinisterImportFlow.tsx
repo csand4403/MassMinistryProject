@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import * as XLSX from "xlsx";
 import { bulkImportMinisters } from "@/lib/actions";
 import { cn } from "@/lib/utils";
-import { ROLE_SHORT_LABELS, ROLE_DISPLAY_ORDER } from "@/types";
-import type { Minister, MinisterRole } from "@/types";
+import { ROLE_SHORT_LABELS, ROLE_DISPLAY_ORDER, PRIEST_TYPE_LABELS } from "@/types";
+import type { Minister, MinisterRole, PriestType } from "@/types";
+import type { MinisterImportReview } from "@/lib/actions";
 
 type ImportStatus = "New" | "Possible Duplicate" | "Error";
 type DuplicateDecision = "skip" | "add" | "merge";
@@ -19,6 +21,10 @@ interface ParsedRow {
   roles: MinisterRole[];
   notification_preference: "email" | "sms" | "both" | "none";
   notes?: string;
+  priest_type?: PriestType | null;
+  minister_diocese?: string;
+  letter_of_suitability?: boolean | null;
+  letter_expiration_date?: string | null;
   status: ImportStatus;
   error?: string;
   duplicate?: Minister;
@@ -47,6 +53,14 @@ const HEADER_ALIASES: Record<string, string> = {
   preference: "notification_preference",
   notes: "notes",
   note: "notes",
+  "priest type": "priest_type",
+  priesttype: "priest_type",
+  "minister diocese": "minister_diocese",
+  diocese: "minister_diocese",
+  "letter of suitability": "letter_of_suitability",
+  letterofsuitability: "letter_of_suitability",
+  "letter expiration date": "letter_expiration_date",
+  letterexpirationdate: "letter_expiration_date",
 };
 
 const ROLE_ALIASES: Record<string, MinisterRole> = {
@@ -67,13 +81,44 @@ const ROLE_ALIASES: Record<string, MinisterRole> = {
   thurifer: "THURIFER",
 };
 
+const PRIEST_TYPE_ALIASES: Record<string, PriestType> = {
+  pastor: "PASTOR_ON_STAFF",
+  pastoronstaff: "PASTOR_ON_STAFF",
+  associate: "ASSOCIATE_ON_STAFF",
+  associateonstaff: "ASSOCIATE_ON_STAFF",
+  visiting: "VISITING_CELEBRANT",
+  visitingcelebrant: "VISITING_CELEBRANT",
+};
+
+const CSV_HEADERS = [
+  "First Name",
+  "Last Name",
+  "Email",
+  "Phone",
+  "Roles",
+  "Notification Preference",
+  "Notes",
+  "Priest Type",
+  "Minister Diocese",
+  "Letter of Suitability",
+  "Letter Expiration Date",
+];
+
+const VALID_ROLE_NAMES = ROLE_DISPLAY_ORDER.map((role) => ROLE_SHORT_LABELS[role]).join(", ");
+const RECENT_IMPORTS_KEY = "mass-ministry-recent-imports";
+
 export function MinisterImportFlow({ ministers }: MinisterImportFlowProps) {
   const [rows, setRows] = useState<ParsedRow[]>([]);
   const [fileName, setFileName] = useState("");
   const [parseError, setParseError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<string | null>(null);
+  const [activeReview, setActiveReview] = useState<MinisterImportReview | null>(null);
+  const [recentImports, setRecentImports] = useState<MinisterImportReview[]>([]);
   const [commitError, setCommitError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    setRecentImports(readRecentImports());
+  }, []);
 
   const counts = useMemo(() => ({
     newRows: rows.filter((row) => row.status === "New").length,
@@ -83,7 +128,7 @@ export function MinisterImportFlow({ ministers }: MinisterImportFlowProps) {
 
   const handleFile = async (file: File) => {
     setParseError(null);
-    setSummary(null);
+    setActiveReview(null);
     setCommitError(null);
     setFileName(file.name);
 
@@ -109,7 +154,7 @@ export function MinisterImportFlow({ ministers }: MinisterImportFlowProps) {
 
   const handleCommit = () => {
     setCommitError(null);
-    setSummary(null);
+    setActiveReview(null);
 
     const importable = rows.filter((row) => row.status !== "Error");
     startTransition(async () => {
@@ -121,24 +166,57 @@ export function MinisterImportFlow({ ministers }: MinisterImportFlowProps) {
         notification_preference: row.notification_preference,
         roles: row.roles,
         notes: row.notes,
+        priest_type: row.priest_type,
+        minister_diocese: row.minister_diocese,
+        letter_of_suitability: row.letter_of_suitability,
+        letter_expiration_date: row.letter_expiration_date,
         duplicate_id: row.duplicate?.id,
         decision: row.status === "Possible Duplicate" ? row.decision : "add",
-      })));
+      })), fileName);
 
       if (!result.success) {
         setCommitError(result.error ?? "Import failed.");
         return;
       }
 
-      setSummary(`${result.added} new ministers added, ${result.merged} merged, ${result.skipped} skipped.`);
+      if (result.review) {
+        const next = [result.review, ...readRecentImports().filter((item) => item.id !== result.review?.id)].slice(0, 5);
+        localStorage.setItem(RECENT_IMPORTS_KEY, JSON.stringify(next));
+        setRecentImports(next);
+        setActiveReview(result.review);
+      }
     });
   };
 
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-dashed border-slate-300 bg-white p-5">
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-800">Upload CSV or XLSX</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Valid roles: {VALID_ROLE_NAMES}. Use commas for multiple roles.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={downloadSampleCsv}
+              className="rounded-md bg-white px-3 py-2 text-xs font-semibold text-navy-800 ring-1 ring-slate-200 transition-colors hover:bg-slate-50"
+            >
+              Download Sample CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => downloadMinistersCsv(ministers)}
+              className="rounded-md bg-navy-800 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-navy-700"
+            >
+              Export Ministers
+            </button>
+          </div>
+        </div>
         <label className="block">
-          <span className="text-sm font-semibold text-slate-800">Upload CSV or XLSX</span>
+          <span className="sr-only">Upload CSV or XLSX</span>
           <input
             type="file"
             accept=".csv,.xlsx"
@@ -244,8 +322,12 @@ export function MinisterImportFlow({ ministers }: MinisterImportFlowProps) {
             </button>
           </div>
           {commitError && <p className="text-sm font-medium text-red-700">{commitError}</p>}
-          {summary && <p className="text-sm font-semibold text-green-700">{summary}</p>}
         </div>
+      )}
+
+      {activeReview && <ImportReviewDashboard review={activeReview} />}
+      {recentImports.length > 0 && (
+        <RecentImports imports={recentImports} activeId={activeReview?.id} onSelect={setActiveReview} />
       )}
     </div>
   );
@@ -260,6 +342,10 @@ function parseRow(raw: Record<string, unknown>, index: number, ministers: Minist
   const roles = mapRoles(cell(normalized.roles));
   const notification_preference = mapNotificationPreference(cell(normalized.notification_preference));
   const notes = cell(normalized.notes);
+  const priest_type = mapPriestType(cell(normalized.priest_type));
+  const minister_diocese = cell(normalized.minister_diocese);
+  const letter_of_suitability = mapBoolean(cell(normalized.letter_of_suitability));
+  const letter_expiration_date = cell(normalized.letter_expiration_date);
   const errorParts: string[] = [];
 
   if (!firstName) errorParts.push("First name is required.");
@@ -277,6 +363,10 @@ function parseRow(raw: Record<string, unknown>, index: number, ministers: Minist
     roles,
     notification_preference,
     notes: notes || undefined,
+    priest_type,
+    minister_diocese: minister_diocese || undefined,
+    letter_of_suitability,
+    letter_expiration_date: letter_expiration_date || undefined,
     status,
     error: errorParts.join(" "),
     duplicate,
@@ -312,6 +402,19 @@ function mapNotificationPreference(value: string): "email" | "sms" | "both" | "n
   if (["both", "email + sms", "email and sms", "email/sms"].includes(normalized)) return "both";
   if (["none", "no", "off"].includes(normalized)) return "none";
   return "email";
+}
+
+function mapPriestType(value: string): PriestType | null {
+  if (!value) return null;
+  return PRIEST_TYPE_ALIASES[value.toLowerCase().replace(/[^a-z0-9]/g, "")] ?? null;
+}
+
+function mapBoolean(value: string): boolean | null {
+  if (!value) return null;
+  const normalized = value.toLowerCase().trim();
+  if (["yes", "true", "y", "1"].includes(normalized)) return true;
+  if (["no", "false", "n", "0"].includes(normalized)) return false;
+  return null;
 }
 
 function findDuplicate(
@@ -359,10 +462,10 @@ function rowToMinister(row: ParsedRow): Minister {
     roles: row.roles,
     is_active: true,
     notes: row.notes ?? null,
-    priest_type: null,
-    minister_diocese: null,
-    letter_of_suitability: null,
-    letter_expiration_date: null,
+    priest_type: row.priest_type ?? null,
+    minister_diocese: row.minister_diocese ?? null,
+    letter_of_suitability: row.letter_of_suitability ?? null,
+    letter_expiration_date: row.letter_expiration_date ?? null,
     created_at: "",
   };
 }
@@ -376,4 +479,164 @@ function DuplicatePanel({ title, minister }: { title: string; minister: Minister
       <div>{minister.roles.map((role) => ROLE_SHORT_LABELS[role]).join(", ") || "No roles"}</div>
     </div>
   );
+}
+
+function ImportReviewDashboard({ review }: { review: MinisterImportReview }) {
+  return (
+    <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-5">
+      <div>
+        <h3 className="text-lg font-semibold text-slate-900">Import Review</h3>
+        <p className="mt-1 text-sm text-slate-500">
+          {review.added.length} added, {review.merged.length} merged, {review.skipped.length} skipped
+          {review.file_name ? ` from ${review.file_name}` : ""}.
+        </p>
+      </div>
+
+      <ReviewSection title="Added" items={review.added} empty="No ministers were added." />
+      <ReviewSection title="Merged" items={review.merged} empty="No duplicate ministers were merged." />
+      <ReviewSection title="Skipped" items={review.skipped} empty="No rows were skipped." skipped />
+    </section>
+  );
+}
+
+function ReviewSection({
+  title,
+  items,
+  empty,
+  skipped = false,
+}: {
+  title: string;
+  items: NonNullable<MinisterImportReview["added"]>;
+  empty: string;
+  skipped?: boolean;
+}) {
+  return (
+    <div>
+      <h4 className="text-sm font-semibold text-slate-800">{title}</h4>
+      {items.length === 0 ? (
+        <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-500">{empty}</p>
+      ) : (
+        <div className="mt-2 overflow-hidden rounded-md border border-slate-200">
+          {items.map((item) => (
+            <div key={`${title}-${item.row}-${item.name}`} className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-3 py-2 text-sm last:border-b-0">
+              <div>
+                <div className="font-medium text-slate-900">Row {item.row}: {item.name}</div>
+                {item.reason && <div className="text-xs text-red-700">{item.reason}</div>}
+                {item.changes && <div className="text-xs text-slate-500">{item.changes.join("; ")}</div>}
+              </div>
+              {!skipped && item.minister_id && (
+                <Link
+                  href={`/ministers/${item.minister_id}/edit`}
+                  className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-navy-800 ring-1 ring-slate-200 hover:bg-slate-50"
+                >
+                  Edit
+                </Link>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RecentImports({
+  imports,
+  activeId,
+  onSelect,
+}: {
+  imports: MinisterImportReview[];
+  activeId?: string;
+  onSelect: (review: MinisterImportReview) => void;
+}) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-5">
+      <h3 className="text-sm font-semibold text-slate-800">Recent Imports</h3>
+      <div className="mt-3 grid gap-2">
+        {imports.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSelect(item)}
+            className={cn(
+              "rounded-md px-3 py-2 text-left text-sm ring-1 transition-colors",
+              activeId === item.id
+                ? "bg-navy-800 text-white ring-navy-800"
+                : "bg-slate-50 text-slate-700 ring-slate-200 hover:bg-white"
+            )}
+          >
+            <span className="font-medium">{formatImportDate(item.imported_at)}</span>
+            <span className="ml-2 text-xs opacity-80">
+              {item.added.length} added, {item.merged.length} merged, {item.skipped.length} skipped
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function readRecentImports(): MinisterImportReview[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(RECENT_IMPORTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function downloadSampleCsv() {
+  const rows = [
+    CSV_HEADERS,
+    ["Maria", "Garcia", "maria@example.com", "214-555-0111", "Lector", "email", "Single-role example", "", "", "", ""],
+    ["Thomas", "Nguyen", "thomas@example.com", "214-555-0112", "Lector, EMHC, Usher", "both", "Multi-role example", "", "", "", ""],
+    ["Fr. James", "O'Brien", "frjames@example.com", "214-555-0113", "Priest", "email", "Visiting celebrant", "Visiting Celebrant", "Diocese of Dallas", "Yes", "2026-12-31"],
+    ["Missing", "", "skip@example.com", "", "Psalmist", "email", "Skipped example: missing last name", "", "", "", ""],
+  ];
+  downloadCsv("minister-import-sample.csv", rows);
+}
+
+function downloadMinistersCsv(ministers: Minister[]) {
+  const rows = [
+    CSV_HEADERS,
+    ...ministers.map((minister) => [
+      minister.first_name,
+      minister.last_name,
+      minister.email ?? "",
+      minister.phone ?? "",
+      minister.roles.map((role) => ROLE_SHORT_LABELS[role]).join(", "),
+      minister.notification_preference,
+      minister.notes ?? "",
+      minister.priest_type ? PRIEST_TYPE_LABELS[minister.priest_type] : "",
+      minister.minister_diocese ?? "",
+      minister.letter_of_suitability == null ? "" : minister.letter_of_suitability ? "Yes" : "No",
+      minister.letter_expiration_date ?? "",
+    ]),
+  ];
+  downloadCsv(`ministers-export-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+}
+
+function downloadCsv(fileName: string, rows: string[][]) {
+  const csv = rows.map((row) => row.map(escapeCsvCell).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function escapeCsvCell(value: string) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+function formatImportDate(value: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
