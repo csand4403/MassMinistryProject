@@ -32,16 +32,45 @@ CREATE UNIQUE INDEX IF NOT EXISTS app_user_minister_id_unique
 
 -- Existing assignment.status values are used for both scheduling/check-in
 -- state and, now, minister responses. Preserve the current states and add
--- PENDING/DECLINED for self-service responses.
+-- PENDING/DECLINED for self-service responses. Some deployed databases have
+-- assignment.status as the assignment_status enum, while older migrations in
+-- git imply text, so handle both shapes safely.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'assignment_status') THEN
+    ALTER TYPE public.assignment_status ADD VALUE IF NOT EXISTS 'PENDING';
+    ALTER TYPE public.assignment_status ADD VALUE IF NOT EXISTS 'DECLINED';
+  END IF;
+END
+$$;
+
 ALTER TABLE public.assignment
   ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'SCHEDULED';
 
-ALTER TABLE public.assignment
-  DROP CONSTRAINT IF EXISTS assignment_status_check;
+DO $$
+DECLARE
+  v_data_type text;
+  v_udt_name text;
+BEGIN
+  SELECT data_type, udt_name
+  INTO v_data_type, v_udt_name
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'assignment'
+    AND column_name = 'status';
 
-ALTER TABLE public.assignment
-  ADD CONSTRAINT assignment_status_check
-  CHECK (status IN ('SCHEDULED', 'PENDING', 'CONFIRMED', 'DECLINED', 'CHECKED_IN', 'ABSENT'));
+  ALTER TABLE public.assignment
+    DROP CONSTRAINT IF EXISTS assignment_status_check;
+
+  IF v_data_type = 'text' THEN
+    ALTER TABLE public.assignment
+      ADD CONSTRAINT assignment_status_check
+      CHECK (status IN ('SCHEDULED', 'PENDING', 'CONFIRMED', 'DECLINED', 'CHECKED_IN', 'ABSENT'));
+  ELSIF v_udt_name <> 'assignment_status' THEN
+    RAISE EXCEPTION 'Unsupported assignment.status type: %.%', v_data_type, v_udt_name;
+  END IF;
+END
+$$;
 
 -- Helpers for app-level authorization policies.
 CREATE OR REPLACE FUNCTION public.current_app_role()
