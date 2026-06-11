@@ -444,7 +444,7 @@ export async function getUpcomingAlerts(
   supabase: SupabaseClient
 ): Promise<{ staffing: StaffingAlert[]; celebrant: CelebrantAlert[] }> {
   const today = new Date();
-  const lookAhead = addDays(today, 28);
+  const lookAhead = addDays(today, 7);
 
   const startStr = format(today, "yyyy-MM-dd");
   const endStr = format(lookAhead, "yyyy-MM-dd");

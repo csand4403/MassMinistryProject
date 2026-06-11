@@ -4,18 +4,28 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MassLanguage } from "@/types";
+import { normalizeDaysOfWeek } from "@/types";
 import { getLiturgicalSeason, formatTimeLabel, timeSortOrder } from "./liturgical-calendar";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-// Maps TypeScript MassDayType to (db_day_type, day_of_week) stored in DB.
-// TypeScript uses specific weekday names; DB stores WEEKDAY + day_of_week int.
-function resolveDayOfWeek(dbDayType: string, dbDayOfWeek: number | null): number | null {
-  if (dbDayType === "SUNDAY") return 0;
-  if (dbDayType === "WEEKDAY" && dbDayOfWeek !== null) return dbDayOfWeek;
+// Returns the target days-of-week for a template.
+// Handles both pre-migration int and post-migration int[] for day_of_week.
+function resolveTargetDows(dbDayType: string, dbDayOfWeek: number | number[] | null): number[] | null {
+  if (dbDayType === "SUNDAY") return [0];
+  if (dbDayType === "WEEKDAY") {
+    const days = normalizeDaysOfWeek(dbDayOfWeek);
+    if (days && days.length > 0) return days;
+  }
   return null; // HOLY_DAY, SCHOOL_MASS — can't auto-generate recurring dates
+}
+
+// Legacy helper used by backfillTemplateLinks (single-day)
+function resolveDayOfWeek(dbDayType: string, dbDayOfWeek: number | number[] | null): number | null {
+  const days = resolveTargetDows(dbDayType, dbDayOfWeek);
+  return days ? days[0] : null;
 }
 
 function dateStrFromDate(d: Date): string {
@@ -60,18 +70,19 @@ export async function generateMassTimesForTemplate(
     .single();
   if (tErr || !template) return result;
 
-  const targetDow = resolveDayOfWeek(template.day_type, template.day_of_week);
-  if (targetDow === null) return result; // HOLY_DAY / SCHOOL_MASS — skip
+  const targetDows = resolveTargetDows(template.day_type, template.day_of_week);
+  if (!targetDows) return result; // HOLY_DAY / SCHOOL_MASS — skip
 
-  // Build list of target dates (today … +12 months)
+  // Build list of target dates (today … +12 months) across all target days-of-week
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const endDate = addDaysToDate(today, 365);
+  const dowSet = new Set(targetDows);
 
   const targetDates: string[] = [];
   let cur = new Date(today);
   while (cur <= endDate) {
-    if (cur.getDay() === targetDow) {
+    if (dowSet.has(cur.getDay())) {
       targetDates.push(dateStrFromDate(cur));
     }
     cur = addDaysToDate(cur, 1);
@@ -345,7 +356,7 @@ export async function backfillTemplateLinks(
 
   const updates: { id: string; template_id: string }[] = [];
   for (const mt of unlinked) {
-    const ld = mt.liturgical_date as { date: string; parish_id: string } | null;
+    const ld = mt.liturgical_date as unknown as { date: string; parish_id: string } | null;
     if (!ld || ld.parish_id !== parishId) continue;
     const [y, mo, da] = ld.date.split("-").map(Number);
     const dow = new Date(y, mo - 1, da).getDay();

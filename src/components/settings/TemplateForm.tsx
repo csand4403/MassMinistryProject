@@ -7,10 +7,10 @@ import { createTemplate, updateTemplate } from "@/lib/actions";
 import {
   ROLE_LABELS,
   LANGUAGE_LABELS,
-  DAY_TYPE_LABELS,
   ROLE_DISPLAY_ORDER,
-  dbToMassDayType,
+  normalizeDaysOfWeek,
 } from "@/types";
+import { normalizeRole } from "@/lib/staffing";
 import type { MassTemplate, MinisterRole, MassDayType, MassLanguage } from "@/types";
 
 const ALL_ROLES = ROLE_DISPLAY_ORDER;
@@ -23,17 +23,24 @@ const LANGUAGE_OPTIONS: MassLanguage[] = [
   "BILINGUAL_EN_FR",
 ];
 
-const DAY_TYPE_OPTIONS: MassDayType[] = [
-  "SUNDAY",
-  "SATURDAY",
-  "MONDAY",
-  "TUESDAY",
-  "WEDNESDAY",
-  "THURSDAY",
-  "FRIDAY",
-  "HOLY_DAY",
-  "SCHOOL_MASS",
+// Weekday options for multi-select (Mon–Sat)
+const WEEKDAY_OPTIONS = [
+  { dow: 1, label: "Mon" },
+  { dow: 2, label: "Tue" },
+  { dow: 3, label: "Wed" },
+  { dow: 4, label: "Thu" },
+  { dow: 5, label: "Fri" },
+  { dow: 6, label: "Sat" },
 ];
+
+type DayCategory = "SUNDAY" | "WEEKDAY" | "HOLY_DAY" | "SCHOOL_MASS";
+
+const DAY_CATEGORY_LABELS: Record<DayCategory, string> = {
+  SUNDAY:      "Sunday",
+  WEEKDAY:     "Weekday",
+  HOLY_DAY:    "Holy Day",
+  SCHOOL_MASS: "School Mass",
+};
 
 interface RoleConfig {
   role: MinisterRole;
@@ -43,13 +50,23 @@ interface RoleConfig {
 
 function defaultRoleConfigs(existing?: MassTemplate): RoleConfig[] {
   return ALL_ROLES.map((role) => {
-    const found = existing?.role_configs?.find((rc) => rc.role === role);
+    // Normalize DB role names (e.g. LECTOR_1 → LECTOR) when matching
+    const found = existing?.role_configs?.find((rc) => normalizeRole(rc.role) === role);
     return {
       role,
       min_count: found?.min_count ?? 0,
       max_count: found?.max_count ?? (role === "CELEBRANT" ? 1 : role === "LECTOR" ? 2 : 4),
     };
   });
+}
+
+function templateToForm(template: MassTemplate): { category: DayCategory; daysOfWeek: number[] } {
+  if (template.day_type === "SUNDAY") return { category: "SUNDAY", daysOfWeek: [] };
+  if (template.day_type === "HOLY_DAY") return { category: "HOLY_DAY", daysOfWeek: [] };
+  if (template.day_type === "SCHOOL_MASS") return { category: "SCHOOL_MASS", daysOfWeek: [] };
+  // WEEKDAY — parse days
+  const days = normalizeDaysOfWeek(template.day_of_week) ?? [];
+  return { category: "WEEKDAY", daysOfWeek: days };
 }
 
 interface TemplateFormProps {
@@ -61,20 +78,36 @@ export function TemplateForm({ template }: TemplateFormProps) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
+  const initial = template ? templateToForm(template) : { category: "SUNDAY" as DayCategory, daysOfWeek: [] };
+
   const [name, setName] = useState(template?.name ?? "");
-  const [dayType, setDayType] = useState<MassDayType>(
-    template ? dbToMassDayType(template.day_type, template.day_of_week) : "SUNDAY"
-  );
+  const [category, setCategory] = useState<DayCategory>(initial.category);
+  const [daysOfWeek, setDaysOfWeek] = useState<number[]>(initial.daysOfWeek);
   const [startTime, setStartTime] = useState(template?.start_time ?? "08:00");
   const [language, setLanguage] = useState<MassLanguage>(template?.language ?? "ENGLISH");
   const [notes, setNotes] = useState(template?.notes ?? "");
   const [roleConfigs, setRoleConfigs] = useState<RoleConfig[]>(defaultRoleConfigs(template));
+
+  const toggleDow = (dow: number) => {
+    setDaysOfWeek((prev) =>
+      prev.includes(dow) ? prev.filter((d) => d !== dow) : [...prev, dow].sort()
+    );
+  };
 
   const updateRole = (role: MinisterRole, field: "min_count" | "max_count", value: number) => {
     setRoleConfigs((prev) =>
       prev.map((rc) => (rc.role === role ? { ...rc, [field]: Math.max(0, value) } : rc))
     );
   };
+
+  // Map category back to a MassDayType for the action (use first selected day or Monday)
+  const primaryDayType: MassDayType = (() => {
+    if (category === "SUNDAY") return "SUNDAY";
+    if (category === "HOLY_DAY") return "HOLY_DAY";
+    if (category === "SCHOOL_MASS") return "SCHOOL_MASS";
+    const DOW_TO_TYPE: Record<number, MassDayType> = { 1:"MONDAY",2:"TUESDAY",3:"WEDNESDAY",4:"THURSDAY",5:"FRIDAY",6:"SATURDAY" };
+    return DOW_TO_TYPE[daysOfWeek[0] ?? 1] ?? "MONDAY";
+  })();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,7 +118,11 @@ export function TemplateForm({ template }: TemplateFormProps) {
       return;
     }
 
-    // Validate max >= min for each role
+    if (category === "WEEKDAY" && daysOfWeek.length === 0) {
+      setError("Select at least one day of the week.");
+      return;
+    }
+
     for (const rc of roleConfigs) {
       if (rc.max_count < rc.min_count) {
         setError(`Max must be ≥ Min for ${ROLE_LABELS[rc.role]}.`);
@@ -96,7 +133,8 @@ export function TemplateForm({ template }: TemplateFormProps) {
     startTransition(async () => {
       const payload = {
         name: name.trim(),
-        day_type: dayType,
+        day_type: primaryDayType,
+        days_of_week: category === "WEEKDAY" ? daysOfWeek : undefined,
         start_time: startTime,
         language,
         notes: notes.trim() || undefined,
@@ -126,7 +164,7 @@ export function TemplateForm({ template }: TemplateFormProps) {
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder='e.g. "Sunday 8:00 AM"'
+            placeholder='e.g. "Sunday 8:00 AM" or "Weekday 8:15 AM (Mon/Wed/Fri)"'
             className={inputClass}
             required
           />
@@ -135,12 +173,15 @@ export function TemplateForm({ template }: TemplateFormProps) {
         <div className="grid grid-cols-2 gap-4">
           <Field label="Day Type" required>
             <select
-              value={dayType}
-              onChange={(e) => setDayType(e.target.value as MassDayType)}
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value as DayCategory);
+                setDaysOfWeek([]);
+              }}
               className={inputClass}
             >
-              {DAY_TYPE_OPTIONS.map((dt) => (
-                <option key={dt} value={dt}>{DAY_TYPE_LABELS[dt]}</option>
+              {(Object.keys(DAY_CATEGORY_LABELS) as DayCategory[]).map((cat) => (
+                <option key={cat} value={cat}>{DAY_CATEGORY_LABELS[cat]}</option>
               ))}
             </select>
           </Field>
@@ -154,6 +195,34 @@ export function TemplateForm({ template }: TemplateFormProps) {
             />
           </Field>
         </div>
+
+        {/* Weekday multi-select */}
+        {category === "WEEKDAY" && (
+          <Field label="Days of Week" required>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {WEEKDAY_OPTIONS.map(({ dow, label }) => (
+                <button
+                  key={dow}
+                  type="button"
+                  onClick={() => toggleDow(dow)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors",
+                    daysOfWeek.includes(dow)
+                      ? "bg-navy-700 text-white border-navy-700"
+                      : "bg-white text-slate-600 border-slate-200 hover:border-navy-400"
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {daysOfWeek.length > 0 && (
+              <p className="text-xs text-slate-400 mt-1.5">
+                Selected: {daysOfWeek.map((d) => WEEKDAY_OPTIONS.find((o) => o.dow === d)?.label).join(", ")}
+              </p>
+            )}
+          </Field>
+        )}
 
         <Field label="Language" required>
           <select
@@ -178,7 +247,7 @@ export function TemplateForm({ template }: TemplateFormProps) {
         </Field>
       </section>
 
-      {/* Role minimums / maximums */}
+      {/* Role requirements */}
       <section className="parish-card p-6 space-y-4">
         <div>
           <h2 className="text-base font-semibold text-slate-800">Role Requirements</h2>

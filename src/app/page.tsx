@@ -26,7 +26,7 @@ export default async function CalendarPage({ searchParams }: PageProps) {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-navy-900">Ministry Calendar</h1>
         <p className="text-sm text-slate-500 mt-1">
-          Click any Sunday or feast day to view Mass assignments
+          Click any day with a status dot to view Mass assignments
         </p>
       </div>
 

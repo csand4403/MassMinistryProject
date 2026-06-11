@@ -23,7 +23,7 @@ export function CalendarGrid({ year, month, days }: CalendarGridProps) {
   const startPadding = getDay(monthStart);
 
   const handleDayClick = (day: CalendarDayStatus) => {
-    if (!day.is_sunday && !day.is_feast_or_holy_day) return;
+    if (!day.is_sunday && !day.liturgical_date_id) return;
     router.push(`/mass/${day.date}`);
   };
 
@@ -49,7 +49,7 @@ export function CalendarGrid({ year, month, days }: CalendarGridProps) {
 
         {days.map((day) => {
           const dayNum = getDayOfMonth(day.date);
-          const isActive = day.is_sunday || day.is_feast_or_holy_day;
+          const isActive = day.is_sunday || !!day.liturgical_date_id;
           const isHolyDay = day.is_feast_or_holy_day;
 
           return (

@@ -254,6 +254,7 @@ export async function updateMinister(
 export async function createTemplate(formData: {
   name: string;
   day_type: MassDayType;
+  days_of_week?: number[];  // override for multi-day weekday templates
   start_time: string;
   language: MassLanguage;
   notes?: string;
@@ -267,7 +268,8 @@ export async function createTemplate(formData: {
     .single();
   if (pError) return { success: false, error: pError.message };
 
-  const { day_type: dbDayType, day_of_week: dbDayOfWeek } = DAY_TYPE_TO_DB[formData.day_type];
+  const { day_type: dbDayType, day_of_week: defaultDow } = DAY_TYPE_TO_DB[formData.day_type];
+  const dbDayOfWeek = formData.days_of_week ?? defaultDow;
 
   const { data: template, error: tError } = await supabase
     .from("mass_template")
@@ -323,6 +325,7 @@ export async function updateTemplate(
   formData: {
     name: string;
     day_type: MassDayType;
+    days_of_week?: number[];  // override for multi-day weekday templates
     start_time: string;
     language: MassLanguage;
     notes?: string;
@@ -338,7 +341,8 @@ export async function updateTemplate(
     .eq("id", id)
     .single();
 
-  const { day_type: dbDayType, day_of_week: dbDayOfWeek } = DAY_TYPE_TO_DB[formData.day_type];
+  const { day_type: dbDayType, day_of_week: defaultDow } = DAY_TYPE_TO_DB[formData.day_type];
+  const dbDayOfWeek = formData.days_of_week ?? defaultDow;
 
   const { error: tError } = await supabase
     .from("mass_template")

@@ -7,15 +7,45 @@ import { deleteTemplate } from "@/lib/actions";
 import {
   LANGUAGE_LABELS,
   LANGUAGE_SHORT,
-  DAY_TYPE_LABELS,
   ROLE_SHORT_LABELS,
-  dbToMassDayType,
+  daysOfWeekLabel,
+  normalizeDaysOfWeek,
 } from "@/types";
 import type { MassTemplate } from "@/types";
 
 interface TemplateListProps {
   templates: MassTemplate[];
 }
+
+// ─── Grouping ────────────────────────────────────────────────────────────────
+
+type GroupKey = "SUNDAY" | "SATURDAY" | "WEEKDAY" | "HOLY_DAY" | "SCHOOL_MASS";
+
+const GROUP_LABELS: Record<GroupKey, string> = {
+  SUNDAY:      "Sunday",
+  SATURDAY:    "Saturday",
+  WEEKDAY:     "Weekdays",
+  HOLY_DAY:    "Holy Days",
+  SCHOOL_MASS: "School Masses",
+};
+
+const GROUP_ORDER: GroupKey[] = ["SUNDAY", "SATURDAY", "WEEKDAY", "HOLY_DAY", "SCHOOL_MASS"];
+
+function templateGroup(t: MassTemplate): GroupKey {
+  if (t.day_type === "SUNDAY") return "SUNDAY";
+  if (t.day_type === "HOLY_DAY") return "HOLY_DAY";
+  if (t.day_type === "SCHOOL_MASS") return "SCHOOL_MASS";
+  // WEEKDAY — check if Saturday only
+  const days = normalizeDaysOfWeek(t.day_of_week) ?? [];
+  if (days.length === 1 && days[0] === 6) return "SATURDAY";
+  return "WEEKDAY";
+}
+
+function sortTemplates(a: MassTemplate, b: MassTemplate): number {
+  return a.start_time.localeCompare(b.start_time);
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 export function TemplateList({ templates }: TemplateListProps) {
   if (templates.length === 0) {
@@ -29,9 +59,52 @@ export function TemplateList({ templates }: TemplateListProps) {
     );
   }
 
+  // Group templates
+  const groups = new Map<GroupKey, MassTemplate[]>();
+  for (const t of templates) {
+    const key = templateGroup(t);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(t);
+  }
+  Array.from(groups.values()).forEach((list) => list.sort(sortTemplates));
+
   return (
     <div className="space-y-3">
-      {templates.map((t) => <TemplateCard key={t.id} template={t} />)}
+      {GROUP_ORDER.filter((g) => groups.has(g)).map((g) => (
+        <TemplateGroup key={g} label={GROUP_LABELS[g]} templates={groups.get(g) ?? []} />
+      ))}
+    </div>
+  );
+}
+
+function TemplateGroup({ label, templates }: { label: string; templates: MassTemplate[] }) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <div className="parish-card overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-5 py-3 bg-slate-50 border-b border-slate-100 text-left hover:bg-slate-100 transition-colors"
+      >
+        <span className="text-sm font-semibold text-slate-700">
+          {label}
+          <span className="ml-2 text-xs font-normal text-slate-400">
+            {templates.length} template{templates.length !== 1 ? "s" : ""}
+          </span>
+        </span>
+        <span className="text-xs text-slate-400 flex-shrink-0">
+          {open ? "▲" : "▼"}
+        </span>
+      </button>
+
+      {open && (
+        <div className="divide-y divide-slate-100">
+          {templates.map((t) => (
+            <TemplateCard key={t.id} template={t} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -49,18 +122,17 @@ function TemplateCard({ template: t }: { template: MassTemplate }) {
 
   const requiredRoles = (t.role_configs ?? []).filter((rc) => rc.min_count > 0);
   const optionalRoles = (t.role_configs ?? []).filter((rc) => rc.min_count === 0 && rc.max_count > 0);
-
-  // Format display time (HH:MM → 12-hr)
   const displayTime = formatTime(t.start_time);
+  const dayLabel = daysOfWeekLabel(t.day_type, t.day_of_week);
 
   return (
-    <div className="parish-card p-5">
+    <div className="p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3 className="text-base font-semibold text-slate-800">{t.name}</h3>
             <span className="text-xs rounded-full px-2 py-0.5 bg-navy-100 text-navy-700 font-medium">
-              {DAY_TYPE_LABELS[dbToMassDayType(t.day_type, t.day_of_week)]}
+              {dayLabel}
             </span>
             <span className="text-xs rounded-full px-2 py-0.5 bg-parish-100 text-parish-700 font-medium">
               {LANGUAGE_SHORT[t.language]}
@@ -132,7 +204,6 @@ function TemplateCard({ template: t }: { template: MassTemplate }) {
 }
 
 function formatTime(time: string): string {
-  // time may be "HH:MM" or "HH:MM:SS"
   const [h, m] = time.split(":").map(Number);
   const period = h >= 12 ? "PM" : "AM";
   const hour = h % 12 || 12;

@@ -128,29 +128,50 @@ export const DAY_TYPE_LABELS: Record<MassDayType, string> = {
 };
 
 // Maps UI MassDayType → { db_day_type, day_of_week } stored in mass_template.
-export const DAY_TYPE_TO_DB: Record<MassDayType, { day_type: string; day_of_week: number | null }> = {
+// day_of_week is now an array (migration 009) — single-day types map to a 1-element array.
+export const DAY_TYPE_TO_DB: Record<MassDayType, { day_type: string; day_of_week: number[] | null }> = {
   SUNDAY:      { day_type: "SUNDAY",    day_of_week: null },
-  SATURDAY:    { day_type: "WEEKDAY",   day_of_week: 6 },
-  MONDAY:      { day_type: "WEEKDAY",   day_of_week: 1 },
-  TUESDAY:     { day_type: "WEEKDAY",   day_of_week: 2 },
-  WEDNESDAY:   { day_type: "WEEKDAY",   day_of_week: 3 },
-  THURSDAY:    { day_type: "WEEKDAY",   day_of_week: 4 },
-  FRIDAY:      { day_type: "WEEKDAY",   day_of_week: 5 },
+  SATURDAY:    { day_type: "WEEKDAY",   day_of_week: [6] },
+  MONDAY:      { day_type: "WEEKDAY",   day_of_week: [1] },
+  TUESDAY:     { day_type: "WEEKDAY",   day_of_week: [2] },
+  WEDNESDAY:   { day_type: "WEEKDAY",   day_of_week: [3] },
+  THURSDAY:    { day_type: "WEEKDAY",   day_of_week: [4] },
+  FRIDAY:      { day_type: "WEEKDAY",   day_of_week: [5] },
   HOLY_DAY:    { day_type: "HOLY_DAY",  day_of_week: null },
   SCHOOL_MASS: { day_type: "SCHOOL_MASS", day_of_week: null },
 };
 
+// Normalise day_of_week — DB may return integer (pre-migration) or integer[] (post-migration).
+export function normalizeDaysOfWeek(raw: number | number[] | null): number[] | null {
+  if (raw === null || raw === undefined) return null;
+  if (Array.isArray(raw)) return raw;
+  return [raw];
+}
+
 // Reverse: reconstruct UI MassDayType from DB values.
-export function dbToMassDayType(dbDayType: string, dbDayOfWeek: number | null): MassDayType {
+// For multi-day templates, uses the first day to pick the label.
+export function dbToMassDayType(dbDayType: string, dbDayOfWeek: number | number[] | null): MassDayType {
   if (dbDayType === "SUNDAY") return "SUNDAY";
   if (dbDayType === "HOLY_DAY") return "HOLY_DAY";
   if (dbDayType === "SCHOOL_MASS") return "SCHOOL_MASS";
-  // WEEKDAY — use day_of_week
+  const days = normalizeDaysOfWeek(dbDayOfWeek);
+  const firstDay = days?.[0] ?? null;
   const map: Record<number, MassDayType> = {
     1: "MONDAY", 2: "TUESDAY", 3: "WEDNESDAY",
     4: "THURSDAY", 5: "FRIDAY", 6: "SATURDAY",
   };
-  return (dbDayOfWeek !== null && map[dbDayOfWeek]) ? map[dbDayOfWeek] : "MONDAY";
+  return (firstDay !== null && map[firstDay]) ? map[firstDay] : "MONDAY";
+}
+
+// Human-readable label for a multi-day template's day pattern.
+const DOW_SHORT: Record<number, string> = { 0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat" };
+export function daysOfWeekLabel(dbDayType: string, dbDayOfWeek: number | number[] | null): string {
+  if (dbDayType === "SUNDAY") return "Sunday";
+  if (dbDayType === "HOLY_DAY") return "Holy Day";
+  if (dbDayType === "SCHOOL_MASS") return "School Mass";
+  const days = normalizeDaysOfWeek(dbDayOfWeek);
+  if (!days || days.length === 0) return "Weekday";
+  return days.map((d) => DOW_SHORT[d] ?? d).join("/");
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +310,7 @@ export interface MassTemplate {
   parish_id: string;
   name: string;
   day_type: string;       // raw DB value: SUNDAY | WEEKDAY | HOLY_DAY | SCHOOL_MASS
-  day_of_week: number | null;  // 0–6; combined with day_type for per-weekday specificity
+  day_of_week: number | number[] | null;  // may be int (pre-migration) or int[] (post-migration)
   start_time: string;
   language: MassLanguage;
   notes: string | null;
