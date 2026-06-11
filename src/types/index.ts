@@ -137,6 +137,44 @@ export const MASS_TYPE_OPTIONS: MassType[] = [
   "OTHER",
 ];
 
+export type MassTag =
+  | "SCHOOL_MASS"
+  | "BAPTISMS"
+  | "FIRST_FRIDAY"
+  | "INCENSE"
+  | "CHILDREN_LITURGY"
+  | "CONFIRMATION"
+  | "FIRST_COMMUNION"
+  | "SPECIAL_MUSIC"
+  | "LIVESTREAM"
+  | "HOSPITALITY";
+
+export const MASS_TAG_LABELS: Record<MassTag, string> = {
+  SCHOOL_MASS: "School Mass",
+  BAPTISMS: "Baptisms",
+  FIRST_FRIDAY: "First Friday",
+  INCENSE: "Incense",
+  CHILDREN_LITURGY: "Children's Liturgy",
+  CONFIRMATION: "Confirmation",
+  FIRST_COMMUNION: "First Communion",
+  SPECIAL_MUSIC: "Special Music",
+  LIVESTREAM: "Livestream",
+  HOSPITALITY: "Hospitality",
+};
+
+export const MASS_TAG_OPTIONS: MassTag[] = [
+  "SCHOOL_MASS",
+  "BAPTISMS",
+  "FIRST_FRIDAY",
+  "INCENSE",
+  "CHILDREN_LITURGY",
+  "CONFIRMATION",
+  "FIRST_COMMUNION",
+  "SPECIAL_MUSIC",
+  "LIVESTREAM",
+  "HOSPITALITY",
+];
+
 // ---------------------------------------------------------------------------
 // Priest type
 // ---------------------------------------------------------------------------
@@ -303,6 +341,7 @@ export interface MassTime {
   language: MassLanguage;
   status: MassStatus;
   mass_type: MassType;
+  mass_tags: MassTag[];
   notes: string | null;
   created_at: string;
 }

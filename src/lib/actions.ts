@@ -3,8 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType, MassStatus, MassType } from "@/types";
-import { DAY_TYPE_TO_DB, MASS_TYPE_LABELS, ROLE_DISPLAY_ORDER } from "@/types";
+import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType, MassStatus, MassType, MassTag } from "@/types";
+import { DAY_TYPE_TO_DB, MASS_TAG_OPTIONS, MASS_TYPE_LABELS, ROLE_DISPLAY_ORDER } from "@/types";
 import { formatTimeLabel, getHolyDayOfObligationName, getLiturgicalSeason, inferMassTypeForDateTime, isHolyDayOfObligation, timeSortOrder } from "@/lib/liturgical-calendar";
 import {
   generateMassTimesForTemplate,
@@ -548,6 +548,49 @@ export async function setMassTimeStatus(
   const { error } = await supabase
     .from("mass_time")
     .update({ status })
+    .eq("id", massTimeId);
+  if (error) throw new Error(error.message);
+
+  revalidatePath(`/mass/${date}`);
+  revalidatePath(`/mass/${date}/${massTimeId}`);
+  revalidatePath("/", "layout");
+}
+
+export async function updateMassMetadata(
+  formData: FormData
+): Promise<void> {
+  const supabase = await createClient();
+
+  const massTimeId = String(formData.get("mass_time_id") ?? "");
+  const date = String(formData.get("date") ?? "");
+  const massType = String(formData.get("mass_type") ?? "DAILY_MASS") as MassType;
+  const notes = String(formData.get("notes") ?? "").trim();
+  const tags = formData
+    .getAll("mass_tags")
+    .map(String)
+    .filter((tag): tag is MassTag => MASS_TAG_OPTIONS.includes(tag as MassTag));
+
+  if (!massTimeId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error("A valid Mass and date are required.");
+  }
+
+  const { data: existing, error: existingError } = await supabase
+    .from("mass_time")
+    .select("time_label")
+    .eq("id", massTimeId)
+    .single();
+  if (existingError) throw new Error(existingError.message);
+
+  const massTypeLabel = MASS_TYPE_LABELS[massType] ?? "Mass";
+  const { error } = await supabase
+    .from("mass_time")
+    .update({
+      mass_type: massType,
+      mass_tags: tags,
+      notes: notes || null,
+      display_name: `${existing.time_label} ${massTypeLabel}`,
+      is_special: !["DAILY_MASS", "SUNDAY_MASS", "SATURDAY_VIGIL"].includes(massType),
+    })
     .eq("id", massTimeId);
   if (error) throw new Error(error.message);
 

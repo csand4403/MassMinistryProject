@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { setMassTimeStatus } from "@/lib/actions";
 import {
   getMassTimeWithRoster,
   getCheckInsForMassTime,
@@ -9,9 +8,11 @@ import {
   getMinistersForRole,
 } from "@/lib/queries";
 import { RoleSectionWithAssign } from "@/components/mass/RoleSectionWithAssign";
+import { MassMetadataEditor } from "@/components/mass/MassMetadataEditor";
+import { MassStatusButton } from "@/components/mass/MassStatusButton";
 import { FeastBanner } from "@/components/mass/FeastBanner";
 import { formatDate } from "@/lib/utils";
-import { ROLE_DISPLAY_ORDER, LANGUAGE_LABELS, MASS_STATUS_LABELS, MASS_TYPE_LABELS } from "@/types";
+import { ROLE_DISPLAY_ORDER, LANGUAGE_LABELS, MASS_STATUS_LABELS, MASS_TAG_LABELS, MASS_TYPE_LABELS } from "@/types";
 import {
   STATUS_BADGE_CLASSES,
   STATUS_DOT_CLASSES,
@@ -113,22 +114,19 @@ export default async function MassDetailPage({ params }: PageProps) {
             {massTime.notes && (
               <p className="mt-1 text-sm text-slate-500">{massTime.notes}</p>
             )}
+            {massTime.mass_tags && massTime.mass_tags.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {massTime.mass_tags.map((tag) => (
+                  <span key={tag} className="rounded bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                    {MASS_TAG_LABELS[tag] ?? tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <form action={setMassTimeStatus.bind(null, massTime.id, date, isCancelled ? "SCHEDULED" : "CANCELLED")}>
-              <button
-                type="submit"
-                className={cn(
-                  "rounded px-3 py-1.5 text-sm font-semibold ring-1 transition-colors",
-                  isCancelled
-                    ? "bg-white text-navy-700 ring-navy-200 hover:bg-navy-50"
-                    : "bg-slate-50 text-slate-500 ring-slate-200 hover:bg-slate-100 hover:text-slate-700"
-                )}
-              >
-                {isCancelled ? "Uncancel" : "Cancel this Mass"}
-              </button>
-            </form>
+            <MassStatusButton massTimeId={massTime.id} date={date} status={massTime.status} />
             {/* Language badge */}
             {massTime.language && (
               <span className="rounded-full px-3 py-1.5 text-sm font-medium bg-sky-50 text-sky-700 ring-1 ring-sky-200">
@@ -179,6 +177,10 @@ export default async function MassDetailPage({ params }: PageProps) {
             </div>
           </div>
         )}
+      </div>
+
+      <div className="mb-5">
+        <MassMetadataEditor massTime={massTime} date={date} />
       </div>
 
       {/* Feast banner */}

@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { setMassTimeStatus } from "@/lib/actions";
+import { MassMetadataEditor } from "@/components/mass/MassMetadataEditor";
+import { MassStatusButton } from "@/components/mass/MassStatusButton";
 import { cn } from "@/lib/utils";
 import { fullName } from "@/lib/utils";
 import {
@@ -7,7 +8,7 @@ import {
   STATUS_DOT_CLASSES,
   STATUS_LABELS,
 } from "@/lib/staffing";
-import { LANGUAGE_SHORT, MASS_STATUS_LABELS, MASS_TYPE_LABELS, ROLE_SHORT_LABELS } from "@/types";
+import { LANGUAGE_SHORT, MASS_STATUS_LABELS, MASS_TAG_LABELS, MASS_TYPE_LABELS, ROLE_SHORT_LABELS } from "@/types";
 import type { MassTimeWithRoster } from "@/types";
 
 interface MassCardProps {
@@ -63,6 +64,15 @@ export function MassCard({ massTime, date }: MassCardProps) {
             </p>
             {massTime.notes && (
               <p className="mt-1 text-xs text-slate-400">{massTime.notes}</p>
+            )}
+            {massTime.mass_tags && massTime.mass_tags.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {massTime.mass_tags.map((tag) => (
+                  <span key={tag} className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                    {MASS_TAG_LABELS[tag] ?? tag}
+                  </span>
+                ))}
+              </div>
             )}
           </div>
 
@@ -123,20 +133,9 @@ export function MassCard({ massTime, date }: MassCardProps) {
           >
             View full roster →
           </Link>
-          <form action={setMassTimeStatus.bind(null, massTime.id, date, isCancelled ? "SCHEDULED" : "CANCELLED")}>
-            <button
-              type="submit"
-              className={cn(
-                "rounded px-2.5 py-1 text-xs font-semibold ring-1 transition-colors",
-                isCancelled
-                  ? "bg-white text-navy-700 ring-navy-200 hover:bg-navy-50"
-                  : "bg-slate-50 text-slate-500 ring-slate-200 hover:bg-slate-100 hover:text-slate-700"
-              )}
-            >
-              {isCancelled ? "Uncancel" : "Cancel this Mass"}
-            </button>
-          </form>
+          <MassStatusButton massTimeId={massTime.id} date={date} status={massTime.status} size="xs" />
         </div>
+        <MassMetadataEditor massTime={massTime} date={date} />
       </div>
     </div>
   );
