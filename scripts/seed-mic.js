@@ -146,60 +146,67 @@ async function generateMassTimesForTemplate(templateId, parishId, dayType, dayOf
   }
   if (targetDates.length === 0) return { liturgicalDatesCreated: 0, massTimesCreated: 0, massTimesLinked: 0 };
 
-  // Fetch existing liturgical_dates
-  const { data: existingLitDates } = await supabase
+  // ── Upsert liturgical_date rows (insert new, skip existing) ─────────────────
+  // Note: upsert with ignoreDuplicates does not reliably return rows via
+  // PostgREST, so we always follow up with an explicit SELECT to get IDs.
+  const litDateMap = new Map();
+  const CHUNK = 200;
+
+  const initialRows = targetDates.map((dateStr) => ({
+    parish_id: parishId,
+    date: dateStr,
+    season: getLiturgicalSeason(dateStr),
+    is_high_feast: false,
+    is_holy_day_of_obligation: false,
+    feast_name: null,
+    notes: null,
+  }));
+
+  for (let i = 0; i < initialRows.length; i += CHUNK) {
+    const { error: upsertErr } = await supabase
+      .from("liturgical_date")
+      .upsert(initialRows.slice(i, i + CHUNK), { onConflict: "parish_id,date", ignoreDuplicates: true });
+    if (upsertErr) {
+      console.error("  ERROR upserting liturgical_dates:", upsertErr.message);
+      return { liturgicalDatesCreated: 0, massTimesCreated: 0, massTimesLinked: 0 };
+    }
+  }
+
+  // Always SELECT to get IDs — never rely on upsert return value
+  const { data: allLitDates, error: fetchErr } = await supabase
     .from("liturgical_date")
     .select("id, date")
     .eq("parish_id", parishId)
     .in("date", targetDates);
-
-  const litDateMap = new Map((existingLitDates ?? []).map((ld) => [ld.date, ld.id]));
-
-  // Insert missing
-  const missingDates = targetDates.filter((d) => !litDateMap.has(d));
-  let liturgicalDatesCreated = 0;
-  if (missingDates.length > 0) {
-    const rows = missingDates.map((dateStr) => ({
-      parish_id: parishId,
-      date: dateStr,
-      season: getLiturgicalSeason(dateStr),
-      is_high_feast: false,
-      is_holy_day_of_obligation: false,
-      feast_name: null,
-      notes: null,
-    }));
-
-    // Insert in chunks
-    const CHUNK = 200;
-    for (let i = 0; i < rows.length; i += CHUNK) {
-      const { data: newLitDates } = await supabase
-        .from("liturgical_date")
-        .upsert(rows.slice(i, i + CHUNK), { onConflict: "parish_id,date", ignoreDuplicates: true })
-        .select("id, date");
-      for (const ld of newLitDates ?? []) litDateMap.set(ld.date, ld.id);
-    }
-    liturgicalDatesCreated = missingDates.length;
+  if (fetchErr) {
+    console.error("  ERROR fetching liturgical_date IDs:", fetchErr.message);
+    return { liturgicalDatesCreated: 0, massTimesCreated: 0, massTimesLinked: 0 };
   }
+  for (const ld of allLitDates ?? []) litDateMap.set(ld.date, ld.id);
 
-  // Re-fetch still-missing
-  const stillMissing = targetDates.filter((d) => !litDateMap.has(d));
-  if (stillMissing.length > 0) {
-    const { data: refetched } = await supabase
-      .from("liturgical_date").select("id, date")
-      .eq("parish_id", parishId).in("date", stillMissing);
-    for (const ld of refetched ?? []) litDateMap.set(ld.date, ld.id);
-  }
+  // Dates we just inserted = target dates that weren't already in the map before upsert.
+  // Since we rebuilt the map from the fresh SELECT, count how many exist now.
+  const liturgicalDatesCreated = allLitDates ? allLitDates.length : 0;
 
   const timeLabel = formatTimeLabel(startTime);
   const sortOrder = timeSortOrder(startTime);
   const litDateIds = Array.from(litDateMap.values());
 
-  // Fetch existing mass_times
-  const { data: existingMassTimes } = await supabase
+  if (litDateIds.length === 0) {
+    console.error("  ERROR: litDateMap empty after upsert+fetch — check table permissions.");
+    return { liturgicalDatesCreated: 0, massTimesCreated: 0, massTimesLinked: 0 };
+  }
+
+  // ── Fetch existing mass_times for these dates ─────────────────────────────
+  const { data: existingMassTimes, error: mtFetchErr } = await supabase
     .from("mass_time")
     .select("id, liturgical_date_id, template_id")
     .in("liturgical_date_id", litDateIds)
     .eq("time_label", timeLabel);
+  if (mtFetchErr) {
+    console.error("  ERROR fetching existing mass_times:", mtFetchErr.message);
+    return { liturgicalDatesCreated, massTimesCreated: 0, massTimesLinked: 0 };
+  }
 
   const mtByLitDateId = new Map(
     (existingMassTimes ?? []).map((mt) => [mt.liturgical_date_id, { id: mt.id, template_id: mt.template_id }])
@@ -227,7 +234,6 @@ async function generateMassTimesForTemplate(templateId, parishId, dayType, dayOf
     }
   }
 
-  const CHUNK = 200;
   for (let i = 0; i < toInsert.length; i += CHUNK) {
     const { error } = await supabase.from("mass_time").insert(toInsert.slice(i, i + CHUNK));
     if (error) console.warn("  mass_time insert warning:", error.message);
@@ -258,7 +264,7 @@ async function upsertTemplate(parishId, templateDef) {
   if (existing) {
     templateId = existing.id;
     console.log(`  [skip] Template already exists: "${name}"`);
-    return { templateId, created: false };
+    return { templateId, dbDayType, dbDayOfWeek, created: false };
   }
 
   const { data: tmpl, error } = await supabase
@@ -359,30 +365,31 @@ async function main() {
     const { templateId, dbDayType, dbDayOfWeek, created } = await upsertTemplate(parish.id, tmplDef);
     totalTemplates++;
 
-    if (created) {
-      const gen = await generateMassTimesForTemplate(
-        templateId, parish.id, dbDayType, dbDayOfWeek,
-        tmplDef.startTime, tmplDef.language
-      );
-      totalLitDates += gen.liturgicalDatesCreated;
-      totalMassTimes += gen.massTimesCreated + gen.massTimesLinked;
-      console.log(`    → ${gen.liturgicalDatesCreated} dates, ${gen.massTimesCreated} new mass_times, ${gen.massTimesLinked} linked`);
-    }
+    const gen = await generateMassTimesForTemplate(
+      templateId, parish.id, dbDayType, dbDayOfWeek,
+      tmplDef.startTime, tmplDef.language
+    );
+    totalLitDates += gen.liturgicalDatesCreated;
+    totalMassTimes += gen.massTimesCreated + gen.massTimesLinked;
+    console.log(`    → ${gen.liturgicalDatesCreated} dates, ${gen.massTimesCreated} new mass_times, ${gen.massTimesLinked} linked`);
   }
 
-  // Count final totals
-  const { count: tmplCount } = await supabase
-    .from("mass_template").select("*", { count: "exact", head: true });
-  const { count: mtCount } = await supabase
-    .from("mass_time").select("*", { count: "exact", head: true });
-  const { count: ldCount } = await supabase
-    .from("liturgical_date").select("*", { count: "exact", head: true });
+  // Count final totals — use count:"exact" and surface errors explicitly
+  const [tmplRes, mtRes, ldRes] = await Promise.all([
+    supabase.from("mass_template").select("*", { count: "exact", head: true }),
+    supabase.from("mass_time").select("*", { count: "exact", head: true }),
+    supabase.from("liturgical_date").select("*", { count: "exact", head: true }),
+  ]);
+
+  if (tmplRes.error) console.error("  count error (mass_template):", tmplRes.error.message);
+  if (mtRes.error)   console.error("  count error (mass_time):", mtRes.error.message);
+  if (ldRes.error)   console.error("  count error (liturgical_date):", ldRes.error.message);
 
   console.log("\n" + "=".repeat(50));
   console.log("SEED COMPLETE");
-  console.log(`  Templates in DB:         ${tmplCount}`);
-  console.log(`  Mass Time records in DB: ${mtCount}`);
-  console.log(`  Liturgical Date records: ${ldCount}`);
+  console.log(`  Templates in DB:         ${tmplRes.count ?? "error"}`);
+  console.log(`  Mass Time records in DB: ${mtRes.count ?? "error"}`);
+  console.log(`  Liturgical Date records: ${ldRes.count ?? "error"}`);
   console.log(`  Created this run:        ${totalTemplates} templates, ${totalMassTimes} mass_times, ${totalLitDates} liturgical_dates`);
   console.log("=".repeat(50));
 }
