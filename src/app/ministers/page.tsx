@@ -34,13 +34,22 @@ export default async function MinistersPage({ searchParams }: PageProps) {
           </p>
         </div>
 
-        <Link
-          href="/ministers/new"
-          className="flex items-center gap-1.5 rounded-lg bg-navy-800 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-700 transition-colors focus-ring"
-        >
-          <PlusIcon className="h-4 w-4" />
-          Add Minister
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/settings?section=ministers"
+            className="flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-navy-800 ring-1 ring-slate-200 transition-colors hover:bg-slate-50 focus-ring"
+          >
+            <UploadIcon className="h-4 w-4" />
+            Import Ministers
+          </Link>
+          <Link
+            href="/ministers/new"
+            className="flex items-center gap-1.5 rounded-lg bg-navy-800 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-700 transition-colors focus-ring"
+          >
+            <PlusIcon className="h-4 w-4" />
+            Add Minister
+          </Link>
+        </div>
       </div>
 
       {/* Role filter chips */}
@@ -95,6 +104,14 @@ function PlusIcon({ className }: { className?: string }) {
   return (
     <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+    </svg>
+  );
+}
+
+function UploadIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5v-12m0 0L7.5 9m4.5-4.5L16.5 9M4.5 19.5h15" />
     </svg>
   );
 }

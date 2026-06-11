@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType, MassStatus, MassType, MassTag } from "@/types";
+import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType, MassStatus, MassType, MassTag, Minister } from "@/types";
 import { DAY_TYPE_TO_DB, MASS_TAG_OPTIONS, MASS_TYPE_LABELS, ROLE_DISPLAY_ORDER } from "@/types";
 import { formatTimeLabel, getHolyDayOfObligationName, getLiturgicalSeason, inferMassTypeForDateTime, isHolyDayOfObligation, timeSortOrder } from "@/lib/liturgical-calendar";
 import {
@@ -260,6 +260,104 @@ export async function updateMinister(
   revalidatePath("/ministers");
   revalidatePath("/", "layout");
   return { success: true };
+}
+
+export interface MinisterImportRow {
+  first_name: string;
+  last_name: string;
+  email?: string;
+  phone?: string;
+  notification_preference: "email" | "sms" | "both" | "none";
+  roles: MinisterRole[];
+  notes?: string;
+  duplicate_id?: string;
+  decision?: "skip" | "add" | "merge";
+}
+
+export async function bulkImportMinisters(
+  rows: MinisterImportRow[]
+): Promise<{ success: boolean; error?: string; added: number; merged: number; skipped: number }> {
+  const supabase = createAdminClient();
+
+  const { data: parish, error: pError } = await supabase
+    .from("parish")
+    .select("id")
+    .single();
+  if (pError) return { success: false, error: pError.message, added: 0, merged: 0, skipped: 0 };
+
+  const cleanRows = rows.map((row) => ({
+    ...row,
+    first_name: row.first_name.trim(),
+    last_name: row.last_name.trim(),
+    email: row.email?.trim() || undefined,
+    phone: row.phone?.trim() || undefined,
+    notes: row.notes?.trim() || undefined,
+    roles: Array.from(new Set(row.roles)),
+    notification_preference: row.notification_preference ?? "email",
+  }));
+
+  let added = 0;
+  let merged = 0;
+  let skipped = 0;
+
+  for (const row of cleanRows) {
+    if (!row.first_name || !row.last_name) {
+      skipped += 1;
+      continue;
+    }
+
+    if (row.duplicate_id && row.decision === "merge") {
+      const { data: existing, error: existingError } = await supabase
+        .from("minister")
+        .select("*")
+        .eq("id", row.duplicate_id)
+        .single();
+      if (existingError) return { success: false, error: existingError.message, added, merged, skipped };
+
+      const minister = existing as Minister;
+      const mergedRoles = Array.from(new Set([...(minister.roles ?? []), ...row.roles]));
+      const updates = {
+        email: minister.email || row.email || null,
+        phone: minister.phone || row.phone || null,
+        notification_preference: minister.notification_preference || row.notification_preference,
+        roles: mergedRoles,
+        notes: minister.notes || row.notes || null,
+      };
+
+      const { error: updateError } = await supabase
+        .from("minister")
+        .update(updates)
+        .eq("id", row.duplicate_id);
+      if (updateError) return { success: false, error: updateError.message, added, merged, skipped };
+
+      merged += 1;
+      continue;
+    }
+
+    if (row.duplicate_id && row.decision !== "add") {
+      skipped += 1;
+      continue;
+    }
+
+    const { error: insertError } = await supabase.from("minister").insert({
+      parish_id: parish.id,
+      first_name: row.first_name,
+      last_name: row.last_name,
+      email: row.email ?? null,
+      phone: row.phone ?? null,
+      notification_preference: row.notification_preference,
+      roles: row.roles,
+      notes: row.notes ?? null,
+      is_active: true,
+    });
+    if (insertError) return { success: false, error: insertError.message, added, merged, skipped };
+
+    added += 1;
+  }
+
+  revalidatePath("/ministers");
+  revalidatePath("/settings");
+  return { success: true, added, merged, skipped };
 }
 
 // ---------------------------------------------------------------------------

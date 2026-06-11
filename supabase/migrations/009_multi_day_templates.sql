@@ -3,17 +3,18 @@
 -- Run this in the Supabase SQL Editor for project yznxovrzaztqxdacqvop.
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- 1. Change day_of_week from integer to integer[] to support multi-day templates.
---    Existing single-day values are wrapped in an array.
-ALTER TABLE mass_template
-  ALTER COLUMN day_of_week TYPE integer[]
-  USING CASE WHEN day_of_week IS NULL THEN NULL ELSE ARRAY[day_of_week::integer] END;
-
--- 2. Remove the check constraint on the old integer column (already dropped by type change,
---    but guard with IF EXISTS in case the DB kept it).
+-- 1. Drop the integer check constraint added in migration 006 BEFORE altering
+--    the column type. Postgres evaluates the constraint during ALTER COLUMN TYPE
+--    and fails because integer[] >= integer has no operator.
 DO $$ BEGIN
   ALTER TABLE mass_template DROP CONSTRAINT IF EXISTS mass_template_day_of_week_check;
 EXCEPTION WHEN undefined_object THEN NULL; END $$;
+
+-- 2. Change day_of_week from integer to integer[] to support multi-day templates.
+--    Existing single-day values are wrapped in a 1-element array.
+ALTER TABLE mass_template
+  ALTER COLUMN day_of_week TYPE integer[]
+  USING CASE WHEN day_of_week IS NULL THEN NULL ELSE ARRAY[day_of_week] END;
 
 -- 3. Consolidate Mon/Wed/Fri 8:15 AM into one template.
 DO $$
@@ -23,31 +24,31 @@ DECLARE
   v_fri_id   uuid;
   v_new_id   uuid;
 BEGIN
-  SELECT id INTO v_mon_id FROM mass_template WHERE name = 'Monday 8:15 AM (English)' LIMIT 1;
+  SELECT id INTO v_mon_id FROM mass_template WHERE name = 'Monday 8:15 AM (English)'    LIMIT 1;
   SELECT id INTO v_wed_id FROM mass_template WHERE name = 'Wednesday 8:15 AM (English)' LIMIT 1;
-  SELECT id INTO v_fri_id FROM mass_template WHERE name = 'Friday 8:15 AM (English)' LIMIT 1;
+  SELECT id INTO v_fri_id FROM mass_template WHERE name = 'Friday 8:15 AM (English)'    LIMIT 1;
 
   IF v_mon_id IS NULL AND v_wed_id IS NULL AND v_fri_id IS NULL THEN
-    RETURN; -- already consolidated
+    RETURN; -- already consolidated or names differ
   END IF;
 
-  -- Create the consolidated template (use Monday's settings as base)
+  -- Create the consolidated template using Monday's settings as base
   INSERT INTO mass_template (parish_id, name, day_type, day_of_week, start_time, language, notes)
   SELECT parish_id, 'Weekday 8:15 AM (Mon/Wed/Fri)', 'WEEKDAY', ARRAY[1,3,5], '08:15', language, notes
   FROM mass_template WHERE id = COALESCE(v_mon_id, v_wed_id, v_fri_id) LIMIT 1
   RETURNING id INTO v_new_id;
 
-  -- Copy role configs from Monday template
+  -- Copy role configs from the base template
   INSERT INTO mass_template_role (template_id, role, min_count, max_count)
   SELECT v_new_id, role, min_count, max_count
   FROM mass_template_role
   WHERE template_id = COALESCE(v_mon_id, v_wed_id, v_fri_id);
 
-  -- Re-link mass_times
+  -- Re-link all mass_times from the three old templates
   UPDATE mass_time SET template_id = v_new_id
   WHERE template_id IN (v_mon_id, v_wed_id, v_fri_id);
 
-  -- Delete old templates (role configs cascade via FK or we delete manually first)
+  -- Remove old role configs then old templates
   DELETE FROM mass_template_role WHERE template_id IN (v_mon_id, v_wed_id, v_fri_id);
   DELETE FROM mass_template       WHERE id           IN (v_mon_id, v_wed_id, v_fri_id);
 END $$;
@@ -55,8 +56,8 @@ END $$;
 -- 4. Consolidate Mon/Tue/Wed/Thu/Fri 5:30 PM into one template.
 DO $$
 DECLARE
-  v_ids  uuid[];
-  v_base uuid;
+  v_ids    uuid[];
+  v_base   uuid;
   v_new_id uuid;
 BEGIN
   SELECT ARRAY_AGG(id) INTO v_ids
