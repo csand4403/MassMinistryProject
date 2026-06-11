@@ -33,6 +33,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
         range={selected.range}
         startDate={selected.startDate}
         endDate={selected.endDate}
+        today={format(new Date(), "yyyy-MM-dd")}
       />
     </div>
   );

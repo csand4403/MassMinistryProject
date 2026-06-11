@@ -96,6 +96,13 @@ export const MASS_STATUS_LABELS: Record<MassStatus, string> = {
   CANCELLED: "Cancelled",
 };
 
+export type CelebrationCategory = "MASS" | "LITURGICAL_SERVICE";
+
+export const CELEBRATION_CATEGORY_LABELS: Record<CelebrationCategory, string> = {
+  MASS: "Mass",
+  LITURGICAL_SERVICE: "Liturgical Service",
+};
+
 export type MassType =
   | "DAILY_MASS"
   | "SUNDAY_MASS"
@@ -107,6 +114,13 @@ export type MassType =
   | "BAPTISM_MASS"
   | "QUINCEANERA_MASS"
   | "MEMORIAL_MASS"
+  | "COMMUNION_SERVICE"
+  | "LITURGY_OF_THE_WORD"
+  | "FUNERAL_VIGIL"
+  | "GRAVESIDE_SERVICE"
+  | "WEDDING_CEREMONY_NON_MASS"
+  | "QUINCEANERA_BLESSING"
+  | "RECONCILIATION_SERVICE"
   | "OTHER";
 
 export const MASS_TYPE_LABELS: Record<MassType, string> = {
@@ -120,10 +134,17 @@ export const MASS_TYPE_LABELS: Record<MassType, string> = {
   BAPTISM_MASS: "Baptism Mass",
   QUINCEANERA_MASS: "Quinceanera Mass",
   MEMORIAL_MASS: "Memorial Mass",
+  COMMUNION_SERVICE: "Communion Service",
+  LITURGY_OF_THE_WORD: "Liturgy of the Word",
+  FUNERAL_VIGIL: "Funeral Vigil",
+  GRAVESIDE_SERVICE: "Graveside Service",
+  WEDDING_CEREMONY_NON_MASS: "Wedding Ceremony (Non-Mass)",
+  QUINCEANERA_BLESSING: "Quinceanera Blessing",
+  RECONCILIATION_SERVICE: "Reconciliation Service",
   OTHER: "Other Mass",
 };
 
-export const MASS_TYPE_OPTIONS: MassType[] = [
+export const MASS_CATEGORY_TYPE_OPTIONS: MassType[] = [
   "DAILY_MASS",
   "SUNDAY_MASS",
   "SATURDAY_VIGIL",
@@ -136,6 +157,30 @@ export const MASS_TYPE_OPTIONS: MassType[] = [
   "MEMORIAL_MASS",
   "OTHER",
 ];
+
+export const LITURGICAL_SERVICE_TYPE_OPTIONS: MassType[] = [
+  "COMMUNION_SERVICE",
+  "LITURGY_OF_THE_WORD",
+  "FUNERAL_VIGIL",
+  "GRAVESIDE_SERVICE",
+  "WEDDING_CEREMONY_NON_MASS",
+  "QUINCEANERA_BLESSING",
+  "RECONCILIATION_SERVICE",
+];
+
+export const MASS_TYPE_OPTIONS: MassType[] = [
+  ...MASS_CATEGORY_TYPE_OPTIONS,
+  ...LITURGICAL_SERVICE_TYPE_OPTIONS,
+];
+
+export const MASS_TYPES_BY_CATEGORY: Record<CelebrationCategory, MassType[]> = {
+  MASS: MASS_CATEGORY_TYPE_OPTIONS,
+  LITURGICAL_SERVICE: LITURGICAL_SERVICE_TYPE_OPTIONS,
+};
+
+export function categoryForMassType(type: MassType): CelebrationCategory {
+  return LITURGICAL_SERVICE_TYPE_OPTIONS.includes(type) ? "LITURGICAL_SERVICE" : "MASS";
+}
 
 export type MassTag =
   | "SCHOOL_MASS"
@@ -343,6 +388,7 @@ export interface MassTime {
   language: MassLanguage;
   status: MassStatus;
   mass_type: MassType;
+  celebration_category: CelebrationCategory;
   mass_tags: MassTag[];
   notes: string | null;
   created_at: string;
@@ -417,6 +463,7 @@ export interface MassTemplate {
   start_time: string;
   language: MassLanguage;
   mass_type: MassType;
+  celebration_category?: CelebrationCategory;
   notes: string | null;
   created_at: string;
   updated_at: string;

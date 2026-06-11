@@ -8,7 +8,7 @@ import type {
   MassType,
   StaffingStatus,
 } from "@/types";
-import { LANGUAGE_LABELS, MASS_TYPE_LABELS } from "@/types";
+import { CELEBRATION_CATEGORY_LABELS, LANGUAGE_LABELS, MASS_TYPE_LABELS, categoryForMassType } from "@/types";
 import { computeStaffingStatus, normalizeRole, STATUS_LABELS } from "@/lib/staffing";
 
 export interface MassReportRow {
@@ -24,6 +24,7 @@ export interface MassReportRow {
   staffingStatus: StaffingStatus;
   staffingLabel: string;
   hasPriest: boolean;
+  categoryLabel: string;
 }
 
 export interface MassReportSummary {
@@ -43,6 +44,19 @@ export interface MassReportData {
   summary: MassReportSummary;
 }
 
+interface ReportMassTime {
+  id: string;
+  liturgical_date_id: string;
+  time_label: string | null;
+  display_name: string;
+  sort_order: number;
+  status: string;
+  mass_type: string;
+  celebration_category?: string | null;
+  language: string;
+  template_id: string | null;
+}
+
 export async function getMassReport(
   supabase: SupabaseClient,
   startDate: string,
@@ -60,15 +74,27 @@ export async function getMassReport(
   const liturgicalDateIds = litDates.map((date) => date.id);
   const dateById = new Map(litDates.map((date) => [date.id, date.date]));
 
-  const { data: massTimes, error: mtError } = await supabase
+  let massTimesSelect = "id, liturgical_date_id, time_label, display_name, sort_order, status, mass_type, celebration_category, language, template_id";
+  let { data: massTimes, error: mtError } = await supabase
     .from("mass_time")
-    .select("id, liturgical_date_id, time_label, display_name, sort_order, status, mass_type, language, template_id")
+    .select(massTimesSelect)
     .in("liturgical_date_id", liturgicalDateIds)
     .order("sort_order");
+  if (mtError && mtError.message?.includes("celebration_category")) {
+    massTimesSelect = "id, liturgical_date_id, time_label, display_name, sort_order, status, mass_type, language, template_id";
+    const fallback = await supabase
+      .from("mass_time")
+      .select(massTimesSelect)
+      .in("liturgical_date_id", liturgicalDateIds)
+      .order("sort_order");
+    massTimes = fallback.data;
+    mtError = fallback.error;
+  }
   if (mtError) throw mtError;
   if (!massTimes || massTimes.length === 0) return emptyReport();
+  const reportMassTimes = massTimes as unknown as ReportMassTime[];
 
-  const massTimeIds = massTimes.map((massTime) => massTime.id);
+  const massTimeIds = reportMassTimes.map((massTime) => massTime.id);
   const { data: assignments, error: aError } = await supabase
     .from("assignment")
     .select("mass_time_id, role, status")
@@ -76,7 +102,7 @@ export async function getMassReport(
   if (aError) throw aError;
 
   const templateIds = Array.from(new Set(
-    massTimes.filter((massTime) => massTime.template_id).map((massTime) => massTime.template_id as string)
+    reportMassTimes.filter((massTime) => massTime.template_id).map((massTime) => massTime.template_id as string)
   ));
   const templateRoleMap = new Map<string, Pick<MassTemplateRoleConfig, "role" | "min_count">[]>();
   if (templateIds.length > 0) {
@@ -90,7 +116,7 @@ export async function getMassReport(
     }
   }
 
-  const oneOffIds = massTimes.filter((massTime) => !massTime.template_id).map((massTime) => massTime.id);
+  const oneOffIds = reportMassTimes.filter((massTime) => !massTime.template_id).map((massTime) => massTime.id);
   const massTimeRoleMap = new Map<string, Pick<MassTimeRoleConfig, "role" | "min_count">[]>();
   if (oneOffIds.length > 0) {
     const { data: roleConfigs } = await supabase
@@ -112,7 +138,7 @@ export async function getMassReport(
     });
   }
 
-  const rows = massTimes
+  const rows = reportMassTimes
     .map((massTime) => {
       const mtAssignments = assignmentsByMass.get(massTime.id) ?? [];
       const roleConfig = massTime.template_id
@@ -123,12 +149,15 @@ export async function getMassReport(
         : computeStaffingStatus(mtAssignments, roleConfig);
       const hasPriest = mtAssignments.some((assignment) => assignment.status !== "ABSENT" && assignment.role === "CELEBRANT");
 
+      const massType = massTime.mass_type as MassType;
+      const category = (massTime.celebration_category ?? categoryForMassType(massType)) as keyof typeof CELEBRATION_CATEGORY_LABELS;
+
       return {
         id: massTime.id,
         date: dateById.get(massTime.liturgical_date_id) ?? "",
         time: massTime.time_label || massTime.display_name,
-        type: massTime.mass_type as MassType,
-        typeLabel: MASS_TYPE_LABELS[massTime.mass_type as MassType] ?? massTime.mass_type,
+        type: massType,
+        typeLabel: MASS_TYPE_LABELS[massType] ?? massTime.mass_type,
         language: massTime.language as MassLanguage,
         languageLabel: LANGUAGE_LABELS[massTime.language as MassLanguage] ?? massTime.language,
         status: massTime.status as MassStatus,
@@ -136,6 +165,7 @@ export async function getMassReport(
         staffingStatus,
         staffingLabel: STATUS_LABELS[staffingStatus],
         hasPriest,
+        categoryLabel: CELEBRATION_CATEGORY_LABELS[category] ?? "Mass",
       };
     })
     .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));

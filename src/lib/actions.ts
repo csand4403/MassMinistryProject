@@ -3,8 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType, MassStatus, MassType, MassTag, Minister } from "@/types";
-import { DAY_TYPE_TO_DB, MASS_TAG_OPTIONS, MASS_TYPE_LABELS, ROLE_DISPLAY_ORDER } from "@/types";
+import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType, MassStatus, MassType, MassTag, Minister, CelebrationCategory } from "@/types";
+import { DAY_TYPE_TO_DB, MASS_TAG_OPTIONS, MASS_TYPE_LABELS, MASS_TYPES_BY_CATEGORY, ROLE_DISPLAY_ORDER, categoryForMassType } from "@/types";
 import { formatTimeLabel, getHolyDayOfObligationName, getLiturgicalSeason, inferMassTypeForDateTime, isHolyDayOfObligation, timeSortOrder } from "@/lib/liturgical-calendar";
 import {
   generateMassTimesForTemplate,
@@ -12,6 +12,7 @@ import {
   smartDeleteTemplateMasses,
   backfillTemplateLinks,
 } from "@/lib/schedule-engine";
+import { roleRowsForMassTime } from "@/lib/role-defaults";
 
 function inferMassTypeForTemplate(
   dayType: MassDayType,
@@ -656,11 +657,13 @@ export async function createOneOffMass(
   const startTime = String(formData.get("start_time") ?? "");
   const language = String(formData.get("language") ?? "ENGLISH") as MassLanguage;
   const massType = String(formData.get("mass_type") ?? inferMassTypeForDateTime(date, startTime)) as MassType;
+  const celebrationCategory = resolveCelebrationCategory(formData.get("celebration_category"), massType);
   const notes = String(formData.get("notes") ?? "").trim();
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(startTime)) {
     throw new Error("A valid date and time are required.");
   }
+  validateCategoryType(celebrationCategory, massType);
 
   const { data: parish, error: pError } = await supabase
     .from("parish")
@@ -720,6 +723,7 @@ export async function createOneOffMass(
       language,
       status: "SCHEDULED",
       mass_type: massType,
+      celebration_category: celebrationCategory,
       notes: notes || null,
     })
     .select("id")
@@ -771,6 +775,7 @@ export async function updateMassMetadata(
   const massTimeId = String(formData.get("mass_time_id") ?? "");
   const date = String(formData.get("date") ?? "");
   const massType = String(formData.get("mass_type") ?? "DAILY_MASS") as MassType;
+  const celebrationCategory = resolveCelebrationCategory(formData.get("celebration_category"), massType);
   const notes = String(formData.get("notes") ?? "").trim();
   const tags = formData
     .getAll("mass_tags")
@@ -780,10 +785,11 @@ export async function updateMassMetadata(
   if (!massTimeId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     throw new Error("A valid Mass and date are required.");
   }
+  validateCategoryType(celebrationCategory, massType);
 
   const { data: existing, error: existingError } = await supabase
     .from("mass_time")
-    .select("time_label")
+    .select("time_label, mass_type, celebration_category")
     .eq("id", massTimeId)
     .single();
   if (existingError) throw new Error(existingError.message);
@@ -793,6 +799,7 @@ export async function updateMassMetadata(
     .from("mass_time")
     .update({
       mass_type: massType,
+      celebration_category: celebrationCategory,
       mass_tags: tags,
       notes: notes || null,
       display_name: `${existing.time_label} ${massTypeLabel}`,
@@ -801,9 +808,31 @@ export async function updateMassMetadata(
     .eq("id", massTimeId);
   if (error) throw new Error(error.message);
 
+  const categoryChanged = existing.mass_type !== massType || existing.celebration_category !== celebrationCategory;
+  if (categoryChanged) {
+    const roleRows = roleRowsForMassTime(massTimeId, massType);
+    await supabase.from("mass_time_role").delete().eq("mass_time_id", massTimeId);
+    if (roleRows.length > 0) {
+      const { error: roleError } = await supabase.from("mass_time_role").insert(roleRows);
+      if (roleError) throw new Error(roleError.message);
+    }
+  }
+
   revalidatePath(`/mass/${date}`);
   revalidatePath(`/mass/${date}/${massTimeId}`);
   revalidatePath("/", "layout");
+}
+
+function resolveCelebrationCategory(value: FormDataEntryValue | null, massType: MassType): CelebrationCategory {
+  const category = String(value ?? "") as CelebrationCategory;
+  if (category === "MASS" || category === "LITURGICAL_SERVICE") return category;
+  return categoryForMassType(massType);
+}
+
+function validateCategoryType(category: CelebrationCategory, massType: MassType) {
+  if (!MASS_TYPES_BY_CATEGORY[category].includes(massType)) {
+    throw new Error("A valid celebration category and type are required.");
+  }
 }
 
 // ---------------------------------------------------------------------------

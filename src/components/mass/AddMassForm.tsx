@@ -3,12 +3,16 @@
 import { useMemo, useState } from "react";
 import { createOneOffMass } from "@/lib/actions";
 import { inferMassTypeForDateTime } from "@/lib/liturgical-calendar";
+import { countsForType, type RoleCounts } from "@/lib/role-defaults";
 import {
+  CELEBRATION_CATEGORY_LABELS,
   LANGUAGE_LABELS,
+  MASS_TYPES_BY_CATEGORY,
   MASS_TYPE_LABELS,
-  MASS_TYPE_OPTIONS,
   ROLE_DISPLAY_ORDER,
   ROLE_SHORT_LABELS,
+  categoryForMassType,
+  type CelebrationCategory,
   type MassLanguage,
   type MassType,
   type MinisterRole,
@@ -22,92 +26,6 @@ const LANGUAGES: MassLanguage[] = [
   "BILINGUAL_EN_FR",
 ];
 
-type RoleCounts = Record<MinisterRole, { min: number; max: number }>;
-
-const ZERO_COUNTS = Object.fromEntries(
-  ROLE_DISPLAY_ORDER.map((role) => [role, { min: 0, max: 0 }])
-) as RoleCounts;
-
-const ROLE_DEFAULTS: Record<MassType, Partial<RoleCounts>> = {
-  DAILY_MASS: {
-    CELEBRANT: { min: 1, max: 1 },
-    DEACON: { min: 0, max: 1 },
-    LECTOR: { min: 1, max: 2 },
-    EMHC: { min: 1, max: 4 },
-    USHER: { min: 1, max: 4 },
-    ALTAR_SERVER: { min: 0, max: 4 },
-  },
-  SUNDAY_MASS: {
-    CELEBRANT: { min: 1, max: 1 },
-    DEACON: { min: 0, max: 1 },
-    LECTOR: { min: 1, max: 2 },
-    EMHC: { min: 1, max: 4 },
-    USHER: { min: 1, max: 4 },
-    ALTAR_SERVER: { min: 0, max: 4 },
-  },
-  SATURDAY_VIGIL: {
-    CELEBRANT: { min: 1, max: 1 },
-    DEACON: { min: 0, max: 1 },
-    LECTOR: { min: 1, max: 2 },
-    EMHC: { min: 1, max: 4 },
-    USHER: { min: 1, max: 4 },
-    ALTAR_SERVER: { min: 0, max: 4 },
-  },
-  FUNERAL: {
-    CELEBRANT: { min: 1, max: 1 },
-    LECTOR: { min: 1, max: 2 },
-    EMHC: { min: 2, max: 4 },
-    USHER: { min: 2, max: 4 },
-  },
-  WEDDING: {
-    CELEBRANT: { min: 1, max: 1 },
-    LECTOR: { min: 1, max: 2 },
-    ALTAR_SERVER: { min: 0, max: 2 },
-  },
-  HOLY_DAY_OF_OBLIGATION: {
-    CELEBRANT: { min: 1, max: 1 },
-    DEACON: { min: 0, max: 1 },
-    LECTOR: { min: 2, max: 2 },
-    PSALMIST: { min: 1, max: 1 },
-    EMHC: { min: 4, max: 8 },
-    USHER: { min: 4, max: 8 },
-    ALTAR_SERVER: { min: 2, max: 6 },
-  },
-  SCHOOL_MASS: {
-    CELEBRANT: { min: 1, max: 1 },
-    LECTOR: { min: 1, max: 2 },
-    ALTAR_SERVER: { min: 2, max: 6 },
-  },
-  BAPTISM_MASS: {
-    CELEBRANT: { min: 1, max: 1 },
-    LECTOR: { min: 1, max: 2 },
-    EMHC: { min: 1, max: 2 },
-  },
-  QUINCEANERA_MASS: {
-    CELEBRANT: { min: 1, max: 1 },
-    LECTOR: { min: 1, max: 2 },
-    EMHC: { min: 1, max: 4 },
-    USHER: { min: 1, max: 4 },
-    ALTAR_SERVER: { min: 0, max: 4 },
-  },
-  MEMORIAL_MASS: {
-    CELEBRANT: { min: 1, max: 1 },
-    LECTOR: { min: 1, max: 2 },
-    EMHC: { min: 1, max: 2 },
-    USHER: { min: 1, max: 2 },
-  },
-  OTHER: {
-    CELEBRANT: { min: 1, max: 1 },
-  },
-};
-
-function countsForType(type: MassType): RoleCounts {
-  return {
-    ...ZERO_COUNTS,
-    ...ROLE_DEFAULTS[type],
-  };
-}
-
 export function AddMassForm({
   date,
   defaultMassType = inferMassTypeForDateTime(date),
@@ -115,6 +33,7 @@ export function AddMassForm({
   date: string;
   defaultMassType?: MassType;
 }) {
+  const [category, setCategory] = useState<CelebrationCategory>(categoryForMassType(defaultMassType));
   const [massType, setMassType] = useState<MassType>(defaultMassType);
   const [typeTouched, setTypeTouched] = useState(false);
   const [roleCounts, setRoleCounts] = useState<RoleCounts>(() => countsForType(defaultMassType));
@@ -130,9 +49,18 @@ export function AddMassForm({
     setRoleCounts(countsForType(nextType));
   };
 
+  const updateCategory = (nextCategory: CelebrationCategory) => {
+    const nextType = MASS_TYPES_BY_CATEGORY[nextCategory][0];
+    setCategory(nextCategory);
+    setTypeTouched(true);
+    setMassType(nextType);
+    setRoleCounts(countsForType(nextType));
+  };
+
   const updateStartTime = (startTime: string) => {
     if (typeTouched) return;
     const inferred = inferMassTypeForDateTime(date, startTime);
+    setCategory(categoryForMassType(inferred));
     setMassType(inferred);
     setRoleCounts(countsForType(inferred));
   };
@@ -157,8 +85,9 @@ export function AddMassForm({
 
       <form action={createOneOffMass} className="mt-4 space-y-4">
         <input type="hidden" name="date" value={date} />
+        <input type="hidden" name="celebration_category" value={category} />
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="block">
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Time</span>
             <input
@@ -166,7 +95,7 @@ export function AddMassForm({
               type="time"
               required
               onChange={(event) => updateStartTime(event.target.value)}
-              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              className="mt-1 w-full min-w-32 rounded border border-slate-300 px-3 py-2 text-sm"
             />
           </label>
 
@@ -186,14 +115,29 @@ export function AddMassForm({
           </label>
 
           <label className="block">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Mass Type</span>
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Category</span>
+            <select
+              value={category}
+              onChange={(event) => updateCategory(event.target.value as CelebrationCategory)}
+              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            >
+              {(Object.keys(CELEBRATION_CATEGORY_LABELS) as CelebrationCategory[]).map((item) => (
+                <option key={item} value={item}>
+                  {CELEBRATION_CATEGORY_LABELS[item]}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Type</span>
             <select
               name="mass_type"
               value={massType}
               onChange={(event) => updateMassType(event.target.value as MassType)}
               className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
             >
-              {MASS_TYPE_OPTIONS.map((type) => (
+              {MASS_TYPES_BY_CATEGORY[category].map((type) => (
                 <option key={type} value={type}>
                   {MASS_TYPE_LABELS[type]}
                 </option>

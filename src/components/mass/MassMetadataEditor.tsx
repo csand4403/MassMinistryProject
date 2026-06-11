@@ -1,11 +1,15 @@
 "use client";
 
+import { useState } from "react";
 import { updateMassMetadata } from "@/lib/actions";
 import {
+  CELEBRATION_CATEGORY_LABELS,
   MASS_TAG_LABELS,
   MASS_TAG_OPTIONS,
+  MASS_TYPES_BY_CATEGORY,
   MASS_TYPE_LABELS,
-  MASS_TYPE_OPTIONS,
+  categoryForMassType,
+  type CelebrationCategory,
   type MassTag,
   type MassTimeWithRoster,
   type MassType,
@@ -19,6 +23,14 @@ export function MassMetadataEditor({
   date: string;
 }) {
   const selectedTags = new Set((massTime.mass_tags ?? []) as MassTag[]);
+  const initialCategory = massTime.celebration_category ?? categoryForMassType(massTime.mass_type);
+  const [category, setCategory] = useState<CelebrationCategory>(initialCategory);
+  const [massType, setMassType] = useState<MassType>(massTime.mass_type);
+
+  const updateCategory = (nextCategory: CelebrationCategory) => {
+    setCategory(nextCategory);
+    setMassType(MASS_TYPES_BY_CATEGORY[nextCategory][0]);
+  };
 
   return (
     <details className="mt-3 rounded border border-slate-200 bg-slate-50/60 p-3">
@@ -29,17 +41,36 @@ export function MassMetadataEditor({
       <form action={updateMassMetadata} className="mt-3 space-y-3">
         <input type="hidden" name="mass_time_id" value={massTime.id} />
         <input type="hidden" name="date" value={date} />
+        <input type="hidden" name="celebration_category" value={category} />
 
         <label className="block">
           <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Primary Type
+            Category
+          </span>
+          <select
+            value={category}
+            onChange={(event) => updateCategory(event.target.value as CelebrationCategory)}
+            className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+          >
+            {(Object.keys(CELEBRATION_CATEGORY_LABELS) as CelebrationCategory[]).map((item) => (
+              <option key={item} value={item}>
+                {CELEBRATION_CATEGORY_LABELS[item]}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Type
           </span>
           <select
             name="mass_type"
-            defaultValue={massTime.mass_type as MassType}
+            value={massType}
+            onChange={(event) => setMassType(event.target.value as MassType)}
             className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
           >
-            {MASS_TYPE_OPTIONS.map((type) => (
+            {MASS_TYPES_BY_CATEGORY[category].map((type) => (
               <option key={type} value={type}>
                 {MASS_TYPE_LABELS[type]}
               </option>
