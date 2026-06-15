@@ -2,9 +2,11 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { getMinisters, getTemplates } from "@/lib/queries";
 import { TemplateList } from "@/components/settings/TemplateList";
+import { UsersRolesSettings, type AppUserSettingsRow } from "@/components/settings/UsersRolesSettings";
 import { MinisterImportFlow } from "@/components/ministers/MinisterImportFlow";
 import { cn } from "@/lib/utils";
 import { requireRole } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export const revalidate = 0;
 
@@ -35,6 +37,9 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     getTemplates(supabase),
     getMinisters(supabase),
   ]);
+  const appUsers = selectedSection === "users-roles" && appUser.role === "ADMIN"
+    ? await getAppUsersForSettings()
+    : [];
 
   return (
     <div className="space-y-8">
@@ -102,10 +107,37 @@ export default async function SettingsPage({ searchParams }: PageProps) {
 
         {selectedSection === "parish-profile" && <ComingSoon title="Parish Profile" />}
         {selectedSection === "notifications" && <ComingSoon title="Notifications" />}
-        {selectedSection === "users-roles" && <ComingSoon title="Users & Roles" />}
+        {selectedSection === "users-roles" && (
+          <UsersRolesSettings users={appUsers} ministers={ministers} />
+        )}
       </div>
     </div>
   );
+}
+
+async function getAppUsersForSettings(): Promise<AppUserSettingsRow[]> {
+  const admin = createAdminClient();
+  const [{ data: appUsers, error }, { data: authUsers, error: authError }] = await Promise.all([
+    admin
+      .from("app_user")
+      .select("id, role, minister_id, created_at, minister(id, first_name, last_name, email)")
+      .order("created_at", { ascending: true }),
+    admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+  ]);
+
+  if (error) throw new Error(error.message);
+  if (authError) throw new Error(authError.message);
+
+  const emailById = new Map(authUsers.users.map((user) => [user.id, user.email ?? "(no email)"]));
+
+  return (appUsers ?? []).map((user) => ({
+    id: user.id,
+    email: emailById.get(user.id) ?? "(auth user missing)",
+    role: user.role,
+    minister_id: user.minister_id,
+    created_at: user.created_at,
+    minister: user.minister,
+  })) as unknown as AppUserSettingsRow[];
 }
 
 function ComingSoon({ title }: { title: string }) {

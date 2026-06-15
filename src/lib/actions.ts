@@ -14,6 +14,7 @@ import {
 } from "@/lib/schedule-engine";
 import { roleRowsForMassTime } from "@/lib/role-defaults";
 import { sendAssignmentEmail } from "@/lib/assignment-email";
+import type { AppRole } from "@/lib/auth";
 
 function inferMassTypeForTemplate(
   dayType: MassDayType,
@@ -304,6 +305,122 @@ export async function updateMinister(
   revalidatePath("/ministers");
   revalidatePath("/", "layout");
   return { success: true };
+}
+
+// ---------------------------------------------------------------------------
+// App users and roles
+// ---------------------------------------------------------------------------
+
+export async function inviteAppUser(formData: FormData) {
+  const { requireRole } = await import("@/lib/auth");
+  await requireRole(["ADMIN"]);
+
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const role = String(formData.get("role") ?? "MINISTER") as AppRole;
+  const ministerId = emptyToNull(formData.get("minister_id"));
+
+  if (!email || !email.includes("@")) {
+    throw new Error("A valid email address is required.");
+  }
+  if (!["ADMIN", "SCHEDULER", "MINISTER"].includes(role)) {
+    throw new Error("A valid role is required.");
+  }
+
+  const admin = createAdminClient();
+  const authUser = await inviteOrFindAuthUser(admin, email);
+  const parishId = await resolveParishForAppUser(admin, ministerId);
+
+  const { error } = await admin.from("app_user").upsert({
+    id: authUser.id,
+    parish_id: parishId,
+    minister_id: ministerId,
+    role,
+  });
+
+  if (error) throw new Error(error.message);
+  revalidatePath("/settings");
+}
+
+export async function updateAppUserRole(formData: FormData) {
+  const { requireRole } = await import("@/lib/auth");
+  await requireRole(["ADMIN"]);
+
+  const id = String(formData.get("id") ?? "");
+  const role = String(formData.get("role") ?? "") as AppRole;
+
+  if (!id || !["ADMIN", "SCHEDULER", "MINISTER"].includes(role)) {
+    throw new Error("A valid user and role are required.");
+  }
+
+  const admin = createAdminClient();
+  const { error } = await admin.from("app_user").update({ role }).eq("id", id);
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/settings");
+}
+
+export async function updateAppUserMinister(formData: FormData) {
+  const { requireRole } = await import("@/lib/auth");
+  await requireRole(["ADMIN"]);
+
+  const id = String(formData.get("id") ?? "");
+  const ministerId = emptyToNull(formData.get("minister_id"));
+  if (!id) throw new Error("A valid user is required.");
+
+  const admin = createAdminClient();
+  const updates: { minister_id: string | null; parish_id?: string } = { minister_id: ministerId };
+  if (ministerId) updates.parish_id = await resolveParishForAppUser(admin, ministerId);
+
+  const { error } = await admin.from("app_user").update(updates).eq("id", id);
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/settings");
+}
+
+function emptyToNull(value: FormDataEntryValue | null) {
+  const text = String(value ?? "").trim();
+  return text.length > 0 ? text : null;
+}
+
+async function inviteOrFindAuthUser(admin: ReturnType<typeof createAdminClient>, email: string) {
+  const { data, error } = await admin.auth.admin.inviteUserByEmail(email);
+  if (!error && data.user) return data.user;
+
+  const existing = await findAuthUserByEmail(admin, email);
+  if (existing) return existing;
+
+  throw new Error(error?.message ?? "Unable to invite user.");
+}
+
+async function findAuthUserByEmail(admin: ReturnType<typeof createAdminClient>, email: string) {
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 100 });
+    if (error) throw new Error(error.message);
+    const found = data.users.find((user) => user.email?.toLowerCase() === email);
+    if (found) return found;
+    if (data.users.length < 100) return null;
+  }
+  return null;
+}
+
+async function resolveParishForAppUser(admin: ReturnType<typeof createAdminClient>, ministerId: string | null) {
+  if (ministerId) {
+    const { data, error } = await admin
+      .from("minister")
+      .select("parish_id")
+      .eq("id", ministerId)
+      .single();
+    if (error) throw new Error(error.message);
+    return data.parish_id as string;
+  }
+
+  const { data, error } = await admin
+    .from("parish")
+    .select("id")
+    .limit(1)
+    .single();
+  if (error) throw new Error(error.message);
+  return data.id as string;
 }
 
 export interface MinisterImportRow {
