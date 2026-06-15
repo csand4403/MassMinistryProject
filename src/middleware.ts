@@ -19,7 +19,7 @@ export async function middleware(request: NextRequest) {
     if (!user) return response;
 
     const appUser = await getAppUserRole(supabase, user.id);
-    if (!appUser) return response;
+    if (!appUser || !appUser.is_active) return response;
 
     return NextResponse.redirect(new URL(defaultPathForRole(appUser.role), request.url));
   }
@@ -40,6 +40,12 @@ export async function middleware(request: NextRequest) {
   if (!appUser) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("provisioned", "missing");
+    return NextResponse.redirect(loginUrl);
+  }
+
+  if (!appUser.is_active) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("inactive", "true");
     return NextResponse.redirect(loginUrl);
   }
 
@@ -92,15 +98,15 @@ function createMiddlewareClient(request: NextRequest, response: NextResponse) {
 async function getAppUserRole(
   supabase: ReturnType<typeof createMiddlewareClient>,
   userId: string
-): Promise<{ role: AppRole } | null> {
+): Promise<{ role: AppRole; is_active: boolean } | null> {
   const { data, error } = await supabase
     .from("app_user")
-    .select("role")
+    .select("role, is_active")
     .eq("id", userId)
     .maybeSingle();
 
   if (error || !data) return null;
-  return data as { role: AppRole };
+  return data as { role: AppRole; is_active: boolean };
 }
 
 export const config = {

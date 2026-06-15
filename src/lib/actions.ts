@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { MinisterRole, AssignmentStatus, MassDayType, MassLanguage, PriestType, MassStatus, MassType, MassTag, Minister, CelebrationCategory } from "@/types";
@@ -319,26 +320,32 @@ export async function inviteAppUser(formData: FormData) {
   const role = String(formData.get("role") ?? "MINISTER") as AppRole;
   const ministerId = emptyToNull(formData.get("minister_id"));
 
-  if (!email || !email.includes("@")) {
-    throw new Error("A valid email address is required.");
-  }
-  if (!["ADMIN", "SCHEDULER", "MINISTER"].includes(role)) {
-    throw new Error("A valid role is required.");
-  }
+  if (!email || !email.includes("@")) actionRedirect("error", "A valid email address is required.");
+  if (!["ADMIN", "SCHEDULER", "MINISTER"].includes(role)) actionRedirect("error", "A valid role is required.");
 
   const admin = createAdminClient();
-  const authUser = await inviteOrFindAuthUser(admin, email);
-  const parishId = await resolveParishForAppUser(admin, ministerId);
+  let authUserId: string;
+  let parishId: string;
+  try {
+    const authUser = await inviteOrFindAuthUser(admin, email);
+    authUserId = authUser.id;
+    parishId = await resolveParishForAppUser(admin, ministerId);
+  } catch (error) {
+    actionRedirect("error", error instanceof Error ? error.message : "Unable to add this app user.");
+  }
 
   const { error } = await admin.from("app_user").upsert({
-    id: authUser.id,
-    parish_id: parishId,
+    id: authUserId!,
+    parish_id: parishId!,
     minister_id: ministerId,
     role,
+    is_active: true,
   });
 
-  if (error) throw new Error(error.message);
+  if (error) actionRedirect("error", formatAppUserError(error.message));
+
   revalidatePath("/settings");
+  actionRedirect("success", "App user access was saved.");
 }
 
 export async function updateAppUserRole(formData: FormData) {
@@ -348,15 +355,14 @@ export async function updateAppUserRole(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   const role = String(formData.get("role") ?? "") as AppRole;
 
-  if (!id || !["ADMIN", "SCHEDULER", "MINISTER"].includes(role)) {
-    throw new Error("A valid user and role are required.");
-  }
+  if (!id || !["ADMIN", "SCHEDULER", "MINISTER"].includes(role)) actionRedirect("error", "A valid user and role are required.");
 
   const admin = createAdminClient();
   const { error } = await admin.from("app_user").update({ role }).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) actionRedirect("error", formatAppUserError(error.message));
 
   revalidatePath("/settings");
+  actionRedirect("success", "Role saved.");
 }
 
 export async function updateAppUserMinister(formData: FormData) {
@@ -365,16 +371,41 @@ export async function updateAppUserMinister(formData: FormData) {
 
   const id = String(formData.get("id") ?? "");
   const ministerId = emptyToNull(formData.get("minister_id"));
-  if (!id) throw new Error("A valid user is required.");
+  if (!id) actionRedirect("error", "A valid user is required.");
 
   const admin = createAdminClient();
   const updates: { minister_id: string | null; parish_id?: string } = { minister_id: ministerId };
-  if (ministerId) updates.parish_id = await resolveParishForAppUser(admin, ministerId);
+  if (ministerId) {
+    try {
+      updates.parish_id = await resolveParishForAppUser(admin, ministerId);
+    } catch (error) {
+      actionRedirect("error", error instanceof Error ? error.message : "Unable to link this minister.");
+    }
+  }
 
   const { error } = await admin.from("app_user").update(updates).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) actionRedirect("error", formatAppUserError(error.message));
 
   revalidatePath("/settings");
+  actionRedirect("success", ministerId ? "Minister link saved." : "Minister link removed.");
+}
+
+export async function updateAppUserAccess(formData: FormData) {
+  const { requireRole } = await import("@/lib/auth");
+  const currentUser = await requireRole(["ADMIN"]);
+
+  const id = String(formData.get("id") ?? "");
+  const isActive = String(formData.get("is_active") ?? "") === "true";
+
+  if (!id) actionRedirect("error", "A valid user is required.");
+  if (id === currentUser.id && !isActive) actionRedirect("error", "You cannot deactivate your own account while signed in.");
+
+  const admin = createAdminClient();
+  const { error } = await admin.from("app_user").update({ is_active: isActive }).eq("id", id);
+  if (error) actionRedirect("error", formatAppUserError(error.message));
+
+  revalidatePath("/settings");
+  actionRedirect("success", isActive ? "User access reactivated." : "User access deactivated.");
 }
 
 function emptyToNull(value: FormDataEntryValue | null) {
@@ -421,6 +452,21 @@ async function resolveParishForAppUser(admin: ReturnType<typeof createAdminClien
     .single();
   if (error) throw new Error(error.message);
   return data.id as string;
+}
+
+function actionRedirect(type: "success" | "error", message: string): never {
+  const params = new URLSearchParams({ section: "users-roles", [type]: message });
+  redirect(`/settings?${params.toString()}`);
+}
+
+function formatAppUserError(message: string) {
+  if (message.toLowerCase().includes("app_user_minister_id_unique")) {
+    return "That minister is already linked to another app user.";
+  }
+  if (message.toLowerCase().includes("duplicate key")) {
+    return "That record already exists. Check the selected user and minister link.";
+  }
+  return message;
 }
 
 export interface MinisterImportRow {

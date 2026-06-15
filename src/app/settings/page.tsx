@@ -11,7 +11,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const revalidate = 0;
 
 interface PageProps {
-  searchParams: Promise<{ section?: string }>;
+  searchParams: Promise<{ section?: string; success?: string; error?: string }>;
 }
 
 const SETTINGS_SECTIONS = [
@@ -108,7 +108,12 @@ export default async function SettingsPage({ searchParams }: PageProps) {
         {selectedSection === "parish-profile" && <ComingSoon title="Parish Profile" />}
         {selectedSection === "notifications" && <ComingSoon title="Notifications" />}
         {selectedSection === "users-roles" && (
-          <UsersRolesSettings users={appUsers} ministers={ministers} />
+          <UsersRolesSettings
+            users={appUsers}
+            ministers={ministers}
+            successMessage={params.success}
+            errorMessage={params.error}
+          />
         )}
       </div>
     </div>
@@ -120,7 +125,7 @@ async function getAppUsersForSettings(): Promise<AppUserSettingsRow[]> {
   const [{ data: appUsers, error }, { data: authUsers, error: authError }] = await Promise.all([
     admin
       .from("app_user")
-      .select("id, role, minister_id, created_at, minister(id, first_name, last_name, email)")
+      .select("id, role, minister_id, parish_id, is_active, created_at, minister(id, first_name, last_name, email, is_active), parish(id, name)")
       .order("created_at", { ascending: true }),
     admin.auth.admin.listUsers({ page: 1, perPage: 1000 }),
   ]);
@@ -135,6 +140,9 @@ async function getAppUsersForSettings(): Promise<AppUserSettingsRow[]> {
     email: emailById.get(user.id) ?? "(auth user missing)",
     role: user.role,
     minister_id: user.minister_id,
+    parish_id: user.parish_id,
+    parish: user.parish,
+    is_active: user.is_active,
     created_at: user.created_at,
     minister: user.minister,
   })) as unknown as AppUserSettingsRow[];

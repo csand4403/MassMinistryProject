@@ -9,6 +9,7 @@ export interface AppUser {
   parish_id: string;
   minister_id: string | null;
   role: AppRole;
+  is_active: boolean;
   created_at: string;
   minister?: Minister | null;
 }
@@ -29,6 +30,7 @@ export async function getCurrentAppUser(): Promise<AppUser | null> {
     .from("app_user")
     .select("*, minister(*)")
     .eq("id", user.id)
+    .eq("is_active", true)
     .maybeSingle();
 
   if (error || !data) return null;

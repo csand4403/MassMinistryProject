@@ -17,6 +17,7 @@ export function LoginForm() {
   const supabase = createClient();
 
   const provisioned = searchParams.get("provisioned") !== "missing";
+  const inactive = searchParams.get("inactive") === "true";
   const redirectTo = searchParams.get("next") ?? "/";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -54,6 +55,12 @@ export function LoginForm() {
       {!provisioned && (
         <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           Your login exists, but it has not been linked to an app role yet.
+        </div>
+      )}
+
+      {inactive && (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          This app account is inactive. Contact a parish administrator to restore access.
         </div>
       )}
 
