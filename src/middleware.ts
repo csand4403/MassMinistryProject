@@ -105,6 +105,6 @@ async function getAppUserRole(
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|MIC.png|api/send-reminders).*)",
+    "/((?!_next/static|_next/image|favicon.ico|MIC.png|api/send-reminders|api/assignments/respond).*)",
   ],
 };

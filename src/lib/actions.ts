@@ -13,6 +13,7 @@ import {
   backfillTemplateLinks,
 } from "@/lib/schedule-engine";
 import { roleRowsForMassTime } from "@/lib/role-defaults";
+import { sendAssignmentEmail } from "@/lib/assignment-email";
 
 function inferMassTypeForTemplate(
   dayType: MassDayType,
@@ -114,6 +115,8 @@ export async function createAssignment(
 
   if (error) return { success: false, error: error.message };
 
+  await sendAssignmentEmail(data.id);
+
   revalidatePath("/", "layout");
   return { success: true, id: data.id };
 }
@@ -155,8 +158,13 @@ export async function createMultipleAssignments(
 
   if (rows.length === 0) return { success: true };
 
-  const { error } = await supabase.from("assignment").insert(rows);
+  const { data: created, error } = await supabase
+    .from("assignment")
+    .insert(rows)
+    .select("id");
   if (error) return { success: false, error: error.message };
+
+  await Promise.all((created ?? []).map((assignment: { id: string }) => sendAssignmentEmail(assignment.id)));
 
   revalidatePath("/", "layout");
   return { success: true };
