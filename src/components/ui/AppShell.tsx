@@ -17,9 +17,12 @@ const NAV_ITEMS = [
 
 export function AppShell({ children, appUser }: { children: React.ReactNode; appUser: AppUser | null }) {
   const pathname = usePathname();
-  const isLogin = pathname === "/login";
+  // The football dashboard is a standalone personal tool that shares this
+  // deployment but none of the parish chrome — render it bare, same as login.
+  const isBare =
+    pathname === "/login" || pathname?.startsWith("/gameday") === true;
 
-  if (isLogin) {
+  if (isBare) {
     return (
       <div className="min-h-screen" style={{ backgroundColor: "#f8f7f5" }}>
         <main className="mx-auto w-full max-w-5xl px-4 py-6">{children}</main>

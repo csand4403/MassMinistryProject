@@ -111,6 +111,9 @@ async function getAppUserRole(
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|MIC.png|api/send-reminders|api/assignments/respond).*)",
+    // `gameday` and `api/gameday` are the "Get Over There Now" football tool,
+    // which is a single-user personal utility with no accounts by design and
+    // must not be pushed through the parish login flow.
+    "/((?!_next/static|_next/image|favicon.ico|MIC.png|api/send-reminders|api/assignments/respond|gameday|api/gameday).*)",
   ],
 };
