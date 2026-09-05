@@ -43,9 +43,30 @@ export function GameCard({ entry, rank }: { entry: RankedGame; rank: number }) {
           <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-slate-400">
             <span className="tabular-nums">#{rank}</span>
             {isLive && (
-              <span className="flex items-center gap-1 text-red-500">
+              <span className="flex shrink-0 items-center gap-1 text-red-500">
                 <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
                 LIVE
+              </span>
+            )}
+            {/* Icon-only: the team rows carry the same marker beside the
+                actual team, and the headline spells it out, so a wordy chip
+                here just wraps and squeezes out the clock on a phone. */}
+            {excitement.fandom.favorite && (
+              <span
+                className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5"
+                title="Your team"
+                aria-label="Your team"
+              >
+                ⭐
+              </span>
+            )}
+            {excitement.fandom.rival && (
+              <span
+                className="shrink-0 rounded-full bg-rose-100 px-1.5 py-0.5"
+                title="Hate watch"
+                aria-label="Hate watch"
+              >
+                😈
               </span>
             )}
             <span className="truncate">{game.statusDetail ?? ""}</span>
@@ -57,11 +78,13 @@ export function GameCard({ entry, rank }: { entry: RankedGame; rank: number }) {
               team={game.away}
               hasPossession={possessionId === game.away.id}
               leading={game.away.score > game.home.score}
+              marker={sideMarker(excitement.fandom, "away")}
             />
             <TeamRow
               team={game.home}
               hasPossession={possessionId === game.home.id}
               leading={game.home.score > game.away.score}
+              marker={sideMarker(excitement.fandom, "home")}
             />
           </div>
         </div>
@@ -151,14 +174,26 @@ export function GameCard({ entry, rank }: { entry: RankedGame; rank: number }) {
   );
 }
 
+/** Which fandom marker, if any, belongs against one side of the game. */
+function sideMarker(
+  fandom: RankedGame["excitement"]["fandom"],
+  side: "home" | "away"
+): string | null {
+  if (fandom.favorite === side) return "⭐";
+  if (fandom.rival === side) return "😈";
+  return null;
+}
+
 function TeamRow({
   team,
   hasPossession,
   leading,
+  marker,
 }: {
   team: RankedGame["game"]["home"];
   hasPossession: boolean;
   leading: boolean;
+  marker: string | null;
 }) {
   return (
     <div className="flex items-center gap-2">
@@ -173,7 +208,17 @@ function TeamRow({
           leading ? "font-semibold text-slate-900" : "text-slate-600"
         }`}
       >
+        {team.rank !== null && (
+          <span className="mr-1 text-[11px] font-semibold text-slate-400">
+            #{team.rank}
+          </span>
+        )}
         {team.abbreviation}
+        {marker && (
+          <span className="ml-1" aria-hidden="true">
+            {marker}
+          </span>
+        )}
         {hasPossession && (
           // Possession indicator — a small football next to whoever has it.
           <span className="ml-1 text-[10px]" title="Has possession">

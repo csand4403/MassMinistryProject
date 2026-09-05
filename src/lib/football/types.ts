@@ -34,6 +34,41 @@ export interface Team {
   logo: string | null;
   /** e.g. "11-3" — may be absent. */
   record: string | null;
+  /**
+   * AP/coaches poll rank, 1-25, or null when unranked or not applicable.
+   * Used to detect upsets (an unranked team beating a top-10 team), which the
+   * hate-watch scoring cares about a great deal.
+   */
+  rank: number | null;
+}
+
+/**
+ * A user's reference to a specific team, as stored in settings.
+ *
+ * Carries the display fields as well as the id because the settings UI needs
+ * to render the chip without re-fetching the whole 700-team league list, and
+ * because it keeps saved preferences readable if you ever open the JSON.
+ */
+export interface TeamRef {
+  league: LeagueId;
+  /** Provider team id, e.g. ESPN's "194" for Ohio State. */
+  id: string;
+  displayName: string;
+  abbreviation: string;
+  logo: string | null;
+}
+
+/**
+ * Which side of a game the user cares about, and why.
+ * `null` on both means this game is fandom-neutral.
+ */
+export interface FandomMatch {
+  /** Side the user roots FOR, if any. */
+  favorite: "home" | "away" | null;
+  /** Side the user roots AGAINST — the hate watch. */
+  rival: "home" | "away" | null;
+  /** Points contributed by fandom, already included in the final score. */
+  bonus: number;
 }
 
 /**
@@ -171,4 +206,9 @@ export interface ExcitementResult {
   headline: string;
   /** True when closeness came from the score-margin fallback, not win prob. */
   usedFallbackCloseness: boolean;
+  /**
+   * Personal-interest adjustment. Zero for anyone with no teams configured —
+   * the objective score is the default experience.
+   */
+  fandom: FandomMatch;
 }

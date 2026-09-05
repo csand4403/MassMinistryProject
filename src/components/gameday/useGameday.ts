@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { RankedGame } from "@/lib/football/types";
+import type { LeagueId, RankedGame, TeamRef } from "@/lib/football/types";
 
 export interface FiredAlert {
   gameId: string;
@@ -29,6 +29,9 @@ export interface AlertSettings {
   threshold: number;
   cooldownMs: number;
   ntfyTopic: string;
+  leagues: LeagueId[];
+  favorites: TeamRef[];
+  rivals: TeamRef[];
 }
 
 export interface Snapshot {

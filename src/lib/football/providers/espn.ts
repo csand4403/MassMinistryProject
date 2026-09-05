@@ -24,7 +24,14 @@
 //     Every accessor here therefore degrades to null rather than throwing.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { LeagueId, LiveGame, GameState, Team, Situation } from "../types";
+import type {
+  LeagueId,
+  LiveGame,
+  GameState,
+  Team,
+  Situation,
+  TeamRef,
+} from "../types";
 import type { ScoreboardProvider, HistoricalPlay } from "./types";
 
 const API_ROOT = "https://site.api.espn.com/apis/site/v2/sports/football";
@@ -60,6 +67,9 @@ const REGULATION_PERIODS = 4;
 export class EspnProvider implements ScoreboardProvider {
   readonly name = "espn";
   readonly supportedLeagues = ["nfl", "college-football"] as const;
+
+  /** League -> full team list. Team rosters change once a year at most. */
+  private readonly teamCache = new Map<LeagueId, TeamRef[]>();
 
   async fetchScoreboard(leagues: readonly LeagueId[]): Promise<LiveGame[]> {
     // Fetch leagues in parallel; a failure in one must not sink the others.
@@ -112,6 +122,43 @@ export class EspnProvider implements ScoreboardProvider {
       }
     }
     return games;
+  }
+
+  /**
+   * Every team in a league, for the favorite / hate-watch pickers.
+   * ESPN returns ~760 college teams, so this is cached for the process
+   * lifetime rather than re-fetched per request.
+   */
+  async fetchTeams(league: LeagueId): Promise<TeamRef[]> {
+    const cached = this.teamCache.get(league);
+    if (cached) return cached;
+
+    const path = ESPN_LEAGUE_PATH[league];
+    const url = `${API_ROOT}/${path}/teams?limit=1000`;
+    const res = await fetch(url, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) throw new Error(`ESPN teams returned HTTP ${res.status}`);
+
+    const body = (await res.json()) as EspnTeamsResponse;
+    const entries = body?.sports?.[0]?.leagues?.[0]?.teams ?? [];
+
+    const teams: TeamRef[] = [];
+    for (const entry of entries) {
+      const team = entry?.team;
+      if (!team?.id || team.isActive === false) continue;
+      teams.push({
+        league,
+        id: String(team.id),
+        displayName: team.displayName ?? team.name ?? String(team.id),
+        abbreviation: team.abbreviation ?? team.shortDisplayName ?? "—",
+        logo: team.logos?.[0]?.href ?? null,
+      });
+    }
+    teams.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    this.teamCache.set(league, teams);
+    return teams;
   }
 
   /**
@@ -240,6 +287,8 @@ function mapTeam(raw: EspnCompetitor): Team {
     logo: team.logo ?? null,
     // records[0] is the overall record; the rest are home/away splits.
     record: raw.records?.[0]?.summary ?? null,
+    // ESPN uses 99 as the "unranked" sentinel rather than omitting the field.
+    rank: normaliseRank(raw.curatedRank?.current),
   };
 }
 
@@ -281,6 +330,12 @@ function pickGamecastUrl(event: EspnEvent): string | null {
  * ESPN reports -1 and 0 for "no active down". Only 1-4 are meaningful, and
  * treating the sentinels as real downs would fire bogus 4th-down bonuses.
  */
+/** ESPN reports 99 for unranked teams; only 1-25 are real poll positions. */
+function normaliseRank(rank: number | undefined): number | null {
+  if (typeof rank !== "number") return null;
+  return rank >= 1 && rank <= 25 ? rank : null;
+}
+
 function normaliseDown(down: number | null): number | null {
   if (typeof down !== "number") return null;
   return down >= 1 && down <= 4 ? down : null;
@@ -356,6 +411,7 @@ interface EspnCompetitor {
   score?: string | number;
   team?: EspnTeam;
   records?: { summary?: string }[];
+  curatedRank?: { current?: number };
 }
 interface EspnTeam {
   id?: string;
@@ -382,6 +438,18 @@ interface EspnSituation {
       secondsLeft?: number;
     };
   };
+}
+interface EspnTeamsResponse {
+  sports?: { leagues?: { teams?: { team?: EspnTeamListEntry }[] }[] }[];
+}
+interface EspnTeamListEntry {
+  id?: string;
+  abbreviation?: string;
+  displayName?: string;
+  name?: string;
+  shortDisplayName?: string;
+  isActive?: boolean;
+  logos?: { href?: string }[];
 }
 interface EspnSummary {
   winprobability?: { homeWinPercentage?: number; playId?: string }[];

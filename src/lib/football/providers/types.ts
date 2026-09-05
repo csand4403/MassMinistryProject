@@ -6,7 +6,7 @@
 // file means writing one more implementation and registering it in index.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { LeagueId, LiveGame, TimelinePoint } from "../types";
+import type { LeagueId, LiveGame, TeamRef, TimelinePoint } from "../types";
 
 export interface ScoreboardProvider {
   /** Short machine name, e.g. "espn". Surfaced in /api/gameday for debugging. */
@@ -24,6 +24,13 @@ export interface ScoreboardProvider {
    * can and let partial data through.
    */
   fetchScoreboard(leagues: readonly LeagueId[]): Promise<LiveGame[]>;
+
+  /**
+   * Optional: list every team in a league, for the favorite / hate-watch
+   * pickers. Providers that cannot enumerate teams should omit this; the UI
+   * degrades to showing only teams currently on the board.
+   */
+  fetchTeams?(league: LeagueId): Promise<TeamRef[]>;
 
   /**
    * Optional: fetch a historical per-play win-probability timeline for one

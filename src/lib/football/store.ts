@@ -12,20 +12,43 @@
 // volatility term would never warm up; see the README's Deployment section.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type {
+  LeagueId,
   LiveGame,
   RankedGame,
+  TeamRef,
   TimelinePoint,
   ExcitementResult,
 } from "./types";
-import type { WinProbSample } from "./excitement";
+import { fandomKey, type FandomContext, type WinProbSample } from "./excitement";
 import { ALERT_DEFAULTS, RUNTIME_CONFIG } from "./config";
 
-/** User-adjustable settings, changed live from the dashboard. */
+/**
+ * Where settings are persisted. A single-user tool that forgot your team on
+ * every restart would be useless, and this is small enough not to warrant a
+ * database. All disk access is best-effort: a read-only or ephemeral
+ * filesystem (a serverless deploy, a container) degrades to in-memory only.
+ */
+const SETTINGS_PATH =
+  process.env.GAMEDAY_SETTINGS_PATH ??
+  join(process.cwd(), ".gameday", "settings.json");
+
+/**
+ * User-adjustable settings, changed live from the dashboard and persisted to
+ * disk so team picks survive a restart.
+ */
 export interface AlertSettings {
   threshold: number;
   cooldownMs: number;
   ntfyTopic: string;
+  /** Leagues currently on the board. Defaults to college football only. */
+  leagues: LeagueId[];
+  /** Teams you root for — their games get an interest bump when nothing else is on. */
+  favorites: TeamRef[];
+  /** Teams you root against — their games surface when they are in trouble. */
+  rivals: TeamRef[];
 }
 
 /** Per-game alert bookkeeping used for debouncing. */
@@ -82,11 +105,7 @@ function createState(): EngineState {
     labels: new Map(),
     alertState: new Map(),
     recentAlerts: [],
-    settings: {
-      threshold: ALERT_DEFAULTS.threshold,
-      cooldownMs: ALERT_DEFAULTS.cooldownMs,
-      ntfyTopic: ALERT_DEFAULTS.ntfyTopic,
-    },
+    settings: loadSettings(),
     subscribers: new Set(),
     lastPollAt: null,
     lastPollError: null,
@@ -159,6 +178,53 @@ export function setLabel(gameId: string, label: string): void {
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
+function defaultSettings(): AlertSettings {
+  return {
+    threshold: ALERT_DEFAULTS.threshold,
+    cooldownMs: ALERT_DEFAULTS.cooldownMs,
+    ntfyTopic: ALERT_DEFAULTS.ntfyTopic,
+    leagues: [...RUNTIME_CONFIG.defaultLeagues],
+    favorites: [],
+    rivals: [],
+  };
+}
+
+/**
+ * Read persisted settings, merging over the defaults so a file written by an
+ * older version (missing newer keys) still loads cleanly.
+ */
+function loadSettings(): AlertSettings {
+  const defaults = defaultSettings();
+  try {
+    const raw = readFileSync(SETTINGS_PATH, "utf8");
+    const parsed = JSON.parse(raw) as Partial<AlertSettings>;
+    return {
+      ...defaults,
+      ...parsed,
+      // Never trust the shapes on disk — a hand-edited file shouldn't crash
+      // the engine on the next poll.
+      leagues: Array.isArray(parsed.leagues) && parsed.leagues.length > 0
+        ? parsed.leagues
+        : defaults.leagues,
+      favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
+      rivals: Array.isArray(parsed.rivals) ? parsed.rivals : [],
+    };
+  } catch {
+    // No file yet, or unreadable — defaults are the right answer either way.
+    return defaults;
+  }
+}
+
+function persistSettings(settings: AlertSettings): void {
+  try {
+    mkdirSync(dirname(SETTINGS_PATH), { recursive: true });
+    writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf8");
+  } catch (err) {
+    // Read-only or ephemeral filesystem: keep running with in-memory settings.
+    console.warn("[gameday] could not persist settings:", err);
+  }
+}
+
 export function getSettings(): AlertSettings {
   return engine().settings;
 }
@@ -166,7 +232,21 @@ export function getSettings(): AlertSettings {
 export function updateSettings(patch: Partial<AlertSettings>): AlertSettings {
   const state = engine();
   state.settings = { ...state.settings, ...patch };
+  persistSettings(state.settings);
   return state.settings;
+}
+
+/**
+ * Resolve the saved team preferences into the key sets the scorer wants.
+ * Rebuilt per poll — the lists are a handful of entries, and this keeps the
+ * engine correct the instant the user changes a pick.
+ */
+export function getFandomContext(): FandomContext {
+  const { favorites, rivals } = engine().settings;
+  return {
+    favorites: new Set(favorites.map((t) => fandomKey(t.league, t.id))),
+    rivals: new Set(rivals.map((t) => fandomKey(t.league, t.id))),
+  };
 }
 
 // ── Alert debouncing ────────────────────────────────────────────────────────

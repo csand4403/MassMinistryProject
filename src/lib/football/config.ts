@@ -28,19 +28,27 @@ export const RUNTIME_CONFIG = {
   /** How many win-probability samples to retain per game (~1 hour at 20s). */
   maxHistorySamples: envInt("FOOTBALL_MAX_HISTORY", 180),
 
-  /** Leagues to track. Override with FOOTBALL_LEAGUES=nfl or a comma list. */
-  leagues: parseLeagues(process.env.FOOTBALL_LEAGUES),
+  /**
+   * Leagues tracked on a cold start, before the user has saved any settings.
+   *
+   * College football is the default: this tool is built around Saturdays,
+   * where 60+ simultaneous games make "which one do I watch" an actual
+   * problem. The NFL is fully supported and can be switched on from the
+   * dashboard or with FOOTBALL_LEAGUES=nfl,college-football.
+   */
+  defaultLeagues: parseLeagues(process.env.FOOTBALL_LEAGUES),
 } as const;
 
-function parseLeagues(raw: string | undefined): LeagueId[] {
-  const valid: LeagueId[] = ["nfl", "college-football"];
-  if (!raw) return valid;
+export const ALL_LEAGUES: LeagueId[] = ["nfl", "college-football"];
+
+export function parseLeagues(raw: string | undefined): LeagueId[] {
+  if (!raw) return ["college-football"];
   const requested = raw
     .split(",")
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean) as LeagueId[];
-  const filtered = requested.filter((l) => valid.includes(l));
-  return filtered.length > 0 ? filtered : valid;
+  const filtered = requested.filter((l) => ALL_LEAGUES.includes(l));
+  return filtered.length > 0 ? filtered : ["college-football"];
 }
 
 /** Alerting defaults — the user can change these live from the dashboard. */

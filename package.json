@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "replay": "tsx scripts/replay-game.mts"
+    "replay": "tsx scripts/replay-game.mts",
+    "check:fandom": "tsx scripts/check-fandom.mts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.4.0",

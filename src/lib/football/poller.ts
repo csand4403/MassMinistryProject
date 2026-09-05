@@ -16,6 +16,7 @@ import {
   broadcast,
   engine,
   getRecentAlerts,
+  getFandomContext,
   getSettings,
   getTimeline,
   getWinProbHistory,
@@ -61,7 +62,9 @@ export async function pollOnce(): Promise<Snapshot> {
   const provider = getProvider();
 
   try {
-    const games = await provider.fetchScoreboard(RUNTIME_CONFIG.leagues);
+    // Leagues come from live settings, not start-up config, so the user can
+    // toggle the NFL on mid-Saturday without a restart.
+    const games = await provider.fetchScoreboard(getSettings().leagues);
     const ranked = scoreAndRank(games);
     setRanked(ranked);
     state.lastPollAt = Date.now();
@@ -96,6 +99,8 @@ async function tick(): Promise<void> {
 function scoreAndRank(games: LiveGame[]): RankedGame[] {
   const now = Date.now();
   const ranked: RankedGame[] = [];
+  // Resolved once per poll rather than per game.
+  const fandom = getFandomContext();
 
   for (const game of games) {
     setLabel(game.id, `${game.away.abbreviation} @ ${game.home.abbreviation}`);
@@ -104,7 +109,7 @@ function scoreAndRank(games: LiveGame[]): RankedGame[] {
     // includes the swing that just happened rather than lagging a poll behind.
     recordWinProb(game.id, game);
     const history = getWinProbHistory(game.id);
-    const excitement = computeExcitement(game, history, now);
+    const excitement = computeExcitement(game, history, now, fandom);
 
     if (game.state === "in") {
       recordTimeline(game.id, toTimelinePoint(game, excitement, now));

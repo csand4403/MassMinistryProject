@@ -1,10 +1,16 @@
 # Get Over There Now 🏈
 
-A live football excitement router. It watches every in-progress NFL and college
-game at once, scores each one 0–100 on how much you'd regret missing it, ranks
-them, and pushes you an alert the moment a game turns into must-see television.
+A live **college football** excitement router. It watches every in-progress game
+at once, scores each one 0–100 on how much you'd regret missing it, ranks them,
+and pushes you an alert the moment a game turns into must-see television.
+
+It also knows who you root for — and who you root *against*.
 
 Open `/gameday`.
+
+College is the default because Saturdays are the problem worth solving: 60+
+simultaneous games, and no way to know which one just got good. The NFL is
+fully supported and is one toggle away in Settings.
 
 > **Note on this repo:** this tool shares a Next.js deployment with the
 > MassMinistry parish app but is otherwise completely independent — its own
@@ -24,6 +30,10 @@ npm run dev
 
 That's it. No API key, no database, no account. The engine starts polling the
 moment you open the dashboard and stops on its own when nothing is live.
+
+Open **Settings** to pick your teams (see [Your teams and your
+enemies](#your-teams-and-your-enemies)) and to switch the NFL on. Preferences
+persist to `.gameday/settings.json`, so you set them once.
 
 To get alerts on your phone, open **Settings** on the dashboard, put an
 unguessable topic name in the ntfy field, then install the
@@ -83,7 +93,69 @@ there is nothing on screen to run to during a rain delay. In a live test, two
 delayed games sat at rank #3 with a score of 27 before this damping and dropped
 to #10–11 at a score of 9 after, with "Delayed" shown in the card's reason line.
 
-### Tuning it
+## Your teams and your enemies
+
+Pick teams in **Settings**. Both lists accept any number of teams from any
+active league, and both are entirely optional — with nothing configured the
+score is purely objective.
+
+### ⭐ Your teams
+
+A **flat premium** (`FAVORITE_INTEREST`, default 25) on any game your team is
+playing. Flat is the important part: it is enough to win a dull slate — early
+games cluster in the 20s, so your team lands near 50 and takes the top spot —
+but never enough to beat somebody else's 4th-quarter thriller at 85.
+
+An earlier version scaled the bonus by `(1 - objectiveScore)`, on the theory
+that it should matter most when nothing else is on. That turned out to be
+backwards: it paid the *biggest* bonus to the *least watchable* game, and in
+live testing it put a favorite being blown out 28-0 above a neutral 3-point
+game. A flat premium doesn't have that failure mode.
+
+The one adjustment is `FAVORITE_DECIDED_TAPER`: once a game is both decided
+*and* late, the premium fades. Down 35 in the 3rd is not appointment viewing
+even for a diehard — but down 35 in the *1st* still might turn around, which is
+why the taper is gated on urgency rather than on the margin alone.
+
+### 😈 Hate watch
+
+Deliberately **not** the mirror image of a favorite. You want your team's games
+whatever the state; you only want your rival's game when it's going badly.
+
+So the bonus scales with how much trouble they're in — `1 - theirWinProbability`
+— sharpened by `HATE_CURVE` so it stays modest while they're merely behind and
+ramps hard as they approach actual defeat. It's weighted by urgency (a rival
+losing late is the event; losing early is a blip), and it adds a flat
+`HATE_UPSET_BONUS` when a **ranked** rival is losing to a much lower-ranked or
+unranked opponent, using AP rankings from the provider.
+
+A rival cruising to a win gets nothing. That's the point.
+
+Real example caught during development — an actual live game, not a mock-up:
+
+```
+ 45 😈 BOIS@ORE 14-7  (fandom +18)
+    UPSET ALERT: #2 ORE losing to BOIS, 4th & 1, 7-point game, 7:27 left in Q2
+```
+
+#2 Oregon trailing unranked Boise State went from 27 to 45 and took over the
+board.
+
+### Behavior guarantees
+
+These are asserted against fixed scenarios by `npm run check:fandom`, so tuning
+can't quietly break them:
+
+| Behavior | Holds |
+|---|---|
+| Your team's normal game tops a boring slate | ✅ |
+| Your team does **not** beat a genuine late thriller | ✅ |
+| Your team being blown out stays below competitive neutral games | ✅ |
+| A rival being upset late spikes hard (+31) | ✅ |
+| A rival cruising to a win gets ~nothing (+0) | ✅ |
+| Games with neither team are completely unaffected | ✅ |
+
+## Tuning the algorithm
 
 Every constant lives in one exported object, `EXCITEMENT_CONFIG`, at the top of
 `src/lib/football/excitement.ts`. Change a number, then **replay a real game you
@@ -95,6 +167,13 @@ npm run replay -- 401772935 --league nfl
 
 Game ids come from any ESPN box-score URL
 (`espn.com/nfl/game/_/gameId/401772935` → `401772935`).
+
+For the fandom bonuses, run the behavior check instead — replay has no notion
+of who you support:
+
+```bash
+npm run check:fandom
+```
 
 The replay feeds ESPN's real per-play win-probability timeline through the exact
 same scoring function the live engine uses, then prints the curve and the peak
@@ -120,6 +199,10 @@ Useful knobs:
   `VOLATILITY_FULL_SCALE` so less swing saturates the term.
 - **Situational tags overpowering** → lower `MAX_SITUATION_BONUS`.
 - **Halftime games showing too high / too low** → `STOPPED_PLAY_MULTIPLIER`.
+- **Your team dominating the board** → lower `FAVORITE_INTEREST`; raise it if
+  you want your team pinned to the top no matter what.
+- **Hate watch too eager / too quiet** → `HATE_WATCH_MAX` and `HATE_CURVE`;
+  `HATE_UPSET_BONUS` and `UPSET_RANK_GAP` control the upset kicker specifically.
 
 Note that a genuine climax saturates at 100, so the very top moments aren't
 distinguishable from each other. That's deliberate — at that point you should
@@ -196,7 +279,7 @@ All optional — the defaults work.
 | Variable | Default | Purpose |
 |---|---|---|
 | `FOOTBALL_PROVIDER` | `espn` | Which data provider to use |
-| `FOOTBALL_LEAGUES` | `nfl,college-football` | Leagues to track |
+| `FOOTBALL_LEAGUES` | `college-football` | Leagues tracked before any settings are saved |
 | `FOOTBALL_POLL_MS` | `20000` | Poll interval while games are live |
 | `FOOTBALL_IDLE_POLL_MS` | `300000` | Poll interval when nothing is live |
 | `FOOTBALL_ALERT_THRESHOLD` | `80` | Default alert threshold |
@@ -204,6 +287,7 @@ All optional — the defaults work.
 | `NTFY_TOPIC` | *(empty)* | ntfy topic; can also be set in the UI |
 | `NTFY_SERVER` | `https://ntfy.sh` | Self-hosted ntfy server |
 | `APP_BASE_URL` | *(empty)* | Used as the alert click-through link |
+| `GAMEDAY_SETTINGS_PATH` | `.gameday/settings.json` | Where preferences persist |
 
 ---
 
@@ -214,7 +298,8 @@ All optional — the defaults work.
 | `GET /api/gameday` | Current ranked slate (starts the engine on first call) |
 | `GET /api/gameday/stream` | SSE push of the same snapshot |
 | `GET /api/gameday/history` | Excitement timelines recorded this session; `?gameId=` for one |
-| `GET,POST /api/gameday/settings` | Read / update threshold, cooldown, ntfy topic |
+| `GET,POST /api/gameday/settings` | Read / update threshold, cooldown, ntfy topic, leagues, teams |
+| `GET /api/gameday/teams?league=` | Team list for the pickers (~760 college teams) |
 | `POST /api/gameday/test-alert` | Send a test notification |
 
 ---

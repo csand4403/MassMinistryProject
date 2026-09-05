@@ -8,6 +8,13 @@
 import { useState } from "react";
 import type { AlertSettings } from "./useGameday";
 import { requestNotificationPermission } from "./useGameday";
+import { TeamPicker } from "./TeamPicker";
+import type { LeagueId } from "@/lib/football/types";
+
+const LEAGUE_LABELS: Record<LeagueId, string> = {
+  "college-football": "College",
+  nfl: "NFL",
+};
 
 export function AlertSettingsPanel({
   settings,
@@ -23,6 +30,16 @@ export function AlertSettingsPanel({
 
   const enableBrowserAlerts = async () => {
     setPermission(await requestNotificationPermission());
+  };
+
+  /** Toggle a league on/off, refusing to leave the board with none. */
+  const toggleLeague = (league: LeagueId) => {
+    const on = settings.leagues.includes(league);
+    const next = on
+      ? settings.leagues.filter((l) => l !== league)
+      : [...settings.leagues, league];
+    if (next.length === 0) return;
+    onChange({ leagues: next });
   };
 
   const sendTest = async () => {
@@ -52,6 +69,51 @@ export function AlertSettingsPanel({
 
       {open && (
         <div className="space-y-4 border-t border-slate-100 px-4 py-4">
+          {/* ── Leagues ───────────────────────────────────────────────────── */}
+          <div>
+            <p className="text-xs font-medium text-slate-600">Leagues</p>
+            <div className="mt-2 flex gap-1.5">
+              {(Object.keys(LEAGUE_LABELS) as LeagueId[]).map((league) => {
+                const on = settings.leagues.includes(league);
+                return (
+                  <button
+                    key={league}
+                    onClick={() => toggleLeague(league)}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                      on
+                        ? "bg-slate-800 text-white"
+                        : "bg-white text-slate-500 ring-1 ring-slate-200"
+                    }`}
+                  >
+                    {LEAGUE_LABELS[league]}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11px] text-slate-400">
+              College is on by default. At least one league stays selected.
+            </p>
+          </div>
+
+          {/* ── Fandom ────────────────────────────────────────────────────── */}
+          <TeamPicker
+            label="⭐ Your teams"
+            hint="Their games get a bump, so they rise to the top when nothing else is close. A decided blowout still fades."
+            accent="bg-amber-100 text-amber-800"
+            leagues={settings.leagues}
+            selected={settings.favorites}
+            onChange={(favorites) => onChange({ favorites })}
+          />
+
+          <TeamPicker
+            label="😈 Hate watch"
+            hint="Their games surface only when they're in trouble — and spike hard if a ranked team is getting upset."
+            accent="bg-rose-100 text-rose-800"
+            leagues={settings.leagues}
+            selected={settings.rivals}
+            onChange={(rivals) => onChange({ rivals })}
+          />
+
           {/* ── Threshold ─────────────────────────────────────────────────── */}
           <div>
             <label

@@ -44,6 +44,37 @@
 //               a wild back-and-forth shootout in the 2nd quarter genuinely is
 //               worth switching to.
 //
+//   fandomBonus Personal-interest adjustment, zero unless you have configured
+//               teams. Two halves, deliberately asymmetric:
+//
+//                 • FAVORITE — a FLAT interest premium. Your team is worth a
+//                   fixed number of extra points to you, always. That is
+//                   enough to win a dull slate (everything sits near 25, so
+//                   your team lands near 50) while never beating somebody
+//                   else's 4th-quarter thriller at 85.
+//
+//                   It is deliberately flat rather than scaled by
+//                   (1 - objectiveScore): an inverse scale pays the BIGGEST
+//                   bonus to the least watchable game, which put a favorite
+//                   being blown out 28-0 above a neutral 3-point game in
+//                   testing. A flat premium leaves a blowout ranked below
+//                   competitive games, which is where it belongs.
+//
+//                   The one taper: once a game is DECIDED and LATE, the
+//                   premium shrinks (FAVORITE_DECIDED_TAPER). Being down 35
+//                   in the 3rd is not appointment viewing even for a diehard,
+//                   while being down 35 in the 1st still might turn around,
+//                   which is why the taper is gated on urgency rather than on
+//                   the margin alone.
+//
+//                 • HATE WATCH — scales with how much TROUBLE the rival is in
+//                   (1 - their win probability), sharpened by a curve and
+//                   weighted by urgency, plus a flat kicker when a ranked
+//                   rival is losing to a much lower-ranked opponent. Rooting
+//                   against a team is not the mirror image of rooting for one:
+//                   you want your team's games, but you only want your
+//                   rival's games when they are going badly.
+//
 //   situationBonus  Flat points for the specific things that make you shout at
 //               a television: red zone, 4th down, goal-line stands, the
 //               two-minute warning, overtime, onside kicks. Additive so they
@@ -125,6 +156,50 @@ export const EXCITEMENT_CONFIG = {
    * hits zero. A 3-point game reads as very close; a 21-point game as dead.
    */
   FALLBACK_MARGIN_ZERO: 21,
+
+  /**
+   * Flat points added for a game featuring one of your teams.
+   *
+   * 25 is calibrated so your team wins a boring slate (typical early-game
+   * scores sit in the 20s) but still loses to a genuine late thriller
+   * elsewhere (80+). Raise it if your team's games should always win the
+   * board; lower it if you want the algorithm to overrule your heart.
+   */
+  FAVORITE_INTEREST: 25,
+  /**
+   * How much of the favorite premium a decided, late game gives up.
+   * 0 disables the taper (your team is always worth the full premium);
+   * 1 strips it entirely once the result is certain.
+   */
+  FAVORITE_DECIDED_TAPER: 0.7,
+
+  /** Peak points for a rival in maximum trouble, late. */
+  HATE_WATCH_MAX: 30,
+  /**
+   * Exponent on rival trouble. Above 1 means the bonus stays modest while the
+   * rival is merely behind and ramps hard as they approach actual defeat.
+   */
+  HATE_CURVE: 1.6,
+  /**
+   * Share of the hate-watch bonus available in the 1st quarter. The rest is
+   * unlocked by urgency — a rival losing early might still be a blip, a rival
+   * losing late is the event you tuned in for.
+   */
+  HATE_TIME_FLOOR: 0.4,
+  /** Flat bonus when a ranked rival is losing to a far lower-ranked team. */
+  HATE_UPSET_BONUS: 12,
+  /**
+   * How many poll positions worse the opponent must be for it to read as an
+   * upset. An unranked opponent always qualifies.
+   */
+  UPSET_RANK_GAP: 10,
+
+  /**
+   * Logistic steepness for the margin-based stand-in win probability used
+   * when the provider exposes none. Tuned so a one-score lead at halftime
+   * reads around 0.8.
+   */
+  FALLBACK_WP_STEEPNESS: 0.16,
 
   /**
    * Multiplier applied when the game is stopped — halftime, a weather delay,
@@ -307,7 +382,10 @@ function assessSituation(
         deficit <= config.COMEBACK_MAX_DEFICIT
       ) {
         bonus += config.BONUS_COMEBACK_DRIVE;
-        reasons.push(`Trailing by ${deficit} with the ball`);
+        // Name the team: "Trailing by 9 with the ball" next to a card where
+        // the OTHER side is winning reads as though the leader is behind.
+        const trailing = homeHasBall ? game.home : game.away;
+        reasons.push(`${trailing.abbreviation} trailing by ${deficit}, has ball`);
       }
     }
   }
@@ -328,6 +406,160 @@ function isOnsideKick(
   return haystack.includes("onside");
 }
 
+// ── Fandom: favorite teams and hate watches ────────────────────────────────
+
+/**
+ * The user's team preferences, resolved to lookup keys.
+ *
+ * Keys are `"<league>:<teamId>"` because team ids are only unique within a
+ * league — ESPN's college id "2" is Auburn while NFL id "2" is Buffalo, and
+ * matching on the bare id would light up the wrong games.
+ */
+export interface FandomContext {
+  favorites: ReadonlySet<string>;
+  rivals: ReadonlySet<string>;
+}
+
+export const NO_FANDOM: FandomContext = {
+  favorites: new Set(),
+  rivals: new Set(),
+};
+
+/** Build the lookup key for one team in one league. */
+export function fandomKey(league: string, teamId: string): string {
+  return `${league}:${teamId}`;
+}
+
+/**
+ * A crude stand-in for win probability when the provider offers none, derived
+ * from score margin and how much time is left. Logistic in the margin, with
+ * the margin's weight growing as the clock runs down.
+ *
+ * This exists only so hate-watch scoring still works on the small-conference
+ * games that carry no win probability; it is not meant to be a good model.
+ */
+export function pseudoWinProbFromMargin(
+  margin: number,
+  timeFraction: number,
+  config: ExcitementConfig = EXCITEMENT_CONFIG
+): number {
+  const timePressure = 1 + 1.5 * (1 - clamp01(timeFraction));
+  const x = config.FALLBACK_WP_STEEPNESS * margin * timePressure;
+  return 1 / (1 + Math.exp(-x));
+}
+
+interface FandomAssessment {
+  favorite: "home" | "away" | null;
+  rival: "home" | "away" | null;
+  bonus: number;
+  reasons: string[];
+}
+
+/**
+ * Personal-interest scoring. See the formula header for the reasoning behind
+ * the asymmetry between favorites and rivals.
+ *
+ */
+function assessFandom(
+  game: LiveGame,
+  fandom: FandomContext,
+  urgency: number,
+  timeFraction: number,
+  config: ExcitementConfig
+): FandomAssessment {
+  const homeKey = fandomKey(game.league, game.home.id);
+  const awayKey = fandomKey(game.league, game.away.id);
+
+  const favorite: "home" | "away" | null = fandom.favorites.has(homeKey)
+    ? "home"
+    : fandom.favorites.has(awayKey)
+      ? "away"
+      : null;
+  const rival: "home" | "away" | null = fandom.rivals.has(homeKey)
+    ? "home"
+    : fandom.rivals.has(awayKey)
+      ? "away"
+      : null;
+
+  const reasons: string[] = [];
+  let bonus = 0;
+
+  // ── Favorite ────────────────────────────────────────────────────────────
+  if (favorite) {
+    const team = favorite === "home" ? game.home : game.away;
+    // How settled is the result? 0 = coin flip, 1 = decided.
+    const winProb =
+      game.homeWinProbability ??
+      pseudoWinProbFromMargin(
+        game.home.score - game.away.score,
+        timeFraction,
+        config
+      );
+    const decidedness = clamp01(Math.abs(winProb - 0.5) * 2);
+
+    // Flat premium (see the formula header), given up only as a decided game
+    // runs out of clock.
+    const taper = 1 - config.FAVORITE_DECIDED_TAPER * decidedness * urgency;
+    bonus += config.FAVORITE_INTEREST * clamp01(taper);
+
+    reasons.push(`${team.abbreviation} — your team`);
+  }
+
+  // ── Hate watch ───────────────────────────────────────────────────────────
+  if (rival) {
+    const rivalTeam = rival === "home" ? game.home : game.away;
+    const otherTeam = rival === "home" ? game.away : game.home;
+
+    // How likely is the rival to LOSE right now?
+    let rivalWinProb: number;
+    if (game.homeWinProbability !== null) {
+      rivalWinProb =
+        rival === "home"
+          ? game.homeWinProbability
+          : 1 - game.homeWinProbability;
+    } else {
+      rivalWinProb = pseudoWinProbFromMargin(
+        rivalTeam.score - otherTeam.score,
+        timeFraction,
+        config
+      );
+    }
+
+    const trouble = clamp01(1 - rivalWinProb);
+    const timeShare =
+      config.HATE_TIME_FLOOR + (1 - config.HATE_TIME_FLOOR) * urgency;
+    const hate =
+      config.HATE_WATCH_MAX * Math.pow(trouble, config.HATE_CURVE) * timeShare;
+    bonus += hate;
+
+    const losing = rivalTeam.score < otherTeam.score;
+
+    // An upset needs the rival to be the one with something to lose.
+    const isUpsetShape =
+      rivalTeam.rank !== null &&
+      (otherTeam.rank === null ||
+        otherTeam.rank - rivalTeam.rank >= config.UPSET_RANK_GAP);
+
+    if (isUpsetShape && losing) {
+      bonus += config.HATE_UPSET_BONUS;
+      reasons.push(
+        `UPSET ALERT: #${rivalTeam.rank} ${rivalTeam.abbreviation} losing to ${otherTeam.abbreviation}`
+      );
+    } else if (trouble > 0.55) {
+      reasons.push(
+        losing
+          ? `${rivalTeam.abbreviation} losing — hate watch`
+          : `${rivalTeam.abbreviation} in trouble — hate watch`
+      );
+    } else if (favorite === null) {
+      // Still worth labelling why this game is on your board at all.
+      reasons.push(`${rivalTeam.abbreviation} — hate watch`);
+    }
+  }
+
+  return { favorite, rival, bonus, reasons };
+}
+
 // ── The main entry point ────────────────────────────────────────────────────
 
 /**
@@ -337,11 +569,14 @@ function isOnsideKick(
  * @param history  Recent win-probability samples for this game, oldest first.
  *                 Pass an empty array if none — volatility simply reads 0.
  * @param now      Injectable clock, so replays and tests are deterministic.
+ * @param fandom   The user's favorite / rival teams. Defaults to NO_FANDOM,
+ *                 which makes this function purely objective.
  */
 export function computeExcitement(
   game: LiveGame,
   history: readonly WinProbSample[] = [],
   now: number = Date.now(),
+  fandom: FandomContext = NO_FANDOM,
   config: ExcitementConfig = EXCITEMENT_CONFIG
 ): ExcitementResult {
   // Games that are not in progress are never exciting to switch to.
@@ -356,6 +591,7 @@ export function computeExcitement(
       reasons: [],
       headline: game.state === "post" ? "Final" : "Not started",
       usedFallbackCloseness: false,
+      fandom: { favorite: null, rival: null, bonus: 0 },
     };
   }
 
@@ -399,16 +635,33 @@ export function computeExcitement(
     config.W_VOLATILITY * volatility;
   const { bonus: situationBonus, reasons } = assessSituation(game, config);
 
-  // Halftime / delay / between quarters: there is nothing on screen to watch.
+  // The objective score: what this game is worth to a neutral viewer. Fandom
+  // is layered on top of this, and reads it, so a favorite team's bump can
+  // shrink when the game is genuinely good on its own merits.
+  const objectiveScore = clamp(100 * tension + situationBonus, 0, 100);
+
+  const fandomResult = assessFandom(
+    game,
+    fandom,
+    urgency,
+    timeFraction,
+    config
+  );
+
+  // Halftime / delay / between quarters: there is nothing on screen to watch,
+  // and that applies to your team's game too.
   const stoppedMultiplier = game.isStopped
     ? config.STOPPED_PLAY_MULTIPLIER
     : 1;
 
   const score = clamp(
-    (100 * tension + situationBonus) * stoppedMultiplier,
+    (objectiveScore + fandomResult.bonus) * stoppedMultiplier,
     0,
     100
   );
+
+  // Fandom reasons lead: "UPSET ALERT" is the thing you want to read first.
+  const allReasons = [...fandomResult.reasons, ...reasons];
 
   return {
     score: Math.round(score),
@@ -417,9 +670,14 @@ export function computeExcitement(
     urgency,
     timeWeight,
     situationBonus,
-    reasons,
-    headline: buildHeadline(game, reasons, closeness, volatility),
+    reasons: allReasons,
+    headline: buildHeadline(game, allReasons, closeness, volatility),
     usedFallbackCloseness,
+    fandom: {
+      favorite: fandomResult.favorite,
+      rival: fandomResult.rival,
+      bonus: Math.round(fandomResult.bonus),
+    },
   };
 }
 
