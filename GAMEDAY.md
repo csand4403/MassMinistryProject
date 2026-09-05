@@ -227,6 +227,9 @@ That single sentence drove most of the decisions:
   numbers get missed entirely (change blindness); flashing ones become noise.
 - **Team color as an accent, never a fill.** A thin bar beside each team and the
   win-probability bar itself. Brand recognition without a contrast problem.
+- **Team logos** load from the provider (all 99 games in a live sample carried
+  logo URLs for both sides). A team without one falls back to a neutral dot
+  rather than a broken image.
 - **Trust signals.** A connection dot, a live "updated 12s ago" that ticks on
   its own, and a manual refresh — so when a number looks stale you can confirm
   it rather than wonder whether the stream died.

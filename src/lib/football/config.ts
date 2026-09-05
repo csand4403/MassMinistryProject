@@ -12,6 +12,30 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * Every league the app understands.
+ *
+ * DECLARATION ORDER MATTERS: RUNTIME_CONFIG below calls parseLeagues() while
+ * the module is still initialising, and parseLeagues reads this array. `const`
+ * bindings are not hoisted, so if this sat below RUNTIME_CONFIG the read would
+ * hit the temporal dead zone and throw "Cannot access 'ALL_LEAGUES' before
+ * initialization" — but only when FOOTBALL_LEAGUES is set, since the unset
+ * path returns early without touching it. That made it invisible in local dev
+ * and fatal in a deployment that sets the variable.
+ */
+export const ALL_LEAGUES: LeagueId[] = ["nfl", "college-football"];
+
+/** Parse a comma-separated league list, falling back to college football. */
+export function parseLeagues(raw: string | undefined): LeagueId[] {
+  if (!raw) return ["college-football"];
+  const requested = raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean) as LeagueId[];
+  const filtered = requested.filter((l) => ALL_LEAGUES.includes(l));
+  return filtered.length > 0 ? filtered : ["college-football"];
+}
+
 export const RUNTIME_CONFIG = {
   /**
    * Poll interval while at least one game is live. The spec asks for 15-30s;
@@ -38,18 +62,6 @@ export const RUNTIME_CONFIG = {
    */
   defaultLeagues: parseLeagues(process.env.FOOTBALL_LEAGUES),
 } as const;
-
-export const ALL_LEAGUES: LeagueId[] = ["nfl", "college-football"];
-
-export function parseLeagues(raw: string | undefined): LeagueId[] {
-  if (!raw) return ["college-football"];
-  const requested = raw
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean) as LeagueId[];
-  const filtered = requested.filter((l) => ALL_LEAGUES.includes(l));
-  return filtered.length > 0 ? filtered : ["college-football"];
-}
 
 /** Alerting defaults — the user can change these live from the dashboard. */
 export const ALERT_DEFAULTS = {
