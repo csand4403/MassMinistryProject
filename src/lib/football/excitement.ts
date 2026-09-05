@@ -592,6 +592,8 @@ export function computeExcitement(
       headline: game.state === "post" ? "Final" : "Not started",
       usedFallbackCloseness: false,
       fandom: { favorite: null, rival: null, bonus: 0 },
+      objectiveScore: 0,
+      stoppedMultiplier: 1,
     };
   }
 
@@ -678,6 +680,8 @@ export function computeExcitement(
       rival: fandomResult.rival,
       bonus: Math.round(fandomResult.bonus),
     },
+    objectiveScore,
+    stoppedMultiplier,
   };
 }
 
@@ -723,6 +727,71 @@ function buildHeadline(
 
   if (parts.length === 0) return game.statusDetail ?? "In progress";
   return parts.slice(0, 4).join(", ");
+}
+
+/**
+ * Re-apply fandom to an already-scored game using a DIFFERENT set of team
+ * preferences. Pure, dependency-free, and safe to run in the browser.
+ *
+ * The server scores every game once with its own settings and broadcasts one
+ * snapshot to everybody. Each browser then calls this with the teams saved in
+ * its own localStorage, so two people watching the same shared URL each get
+ * their own ranking without one overwriting the other's picks.
+ */
+export function personalizeScore(
+  game: LiveGame,
+  result: ExcitementResult,
+  fandom: FandomContext,
+  config: ExcitementConfig = EXCITEMENT_CONFIG
+): ExcitementResult {
+  if (game.state !== "in") return result;
+
+  const timeFraction =
+    game.secondsRemaining === null
+      ? 0.5
+      : clamp01(game.secondsRemaining / config.REGULATION_SECONDS);
+
+  const assessed = assessFandom(
+    game,
+    fandom,
+    result.urgency,
+    timeFraction,
+    config
+  );
+
+  const score = clamp(
+    (result.objectiveScore + assessed.bonus) * result.stoppedMultiplier,
+    0,
+    100
+  );
+
+  // Strip the server's fandom reasons before adding this viewer's, otherwise
+  // someone else's "your team" tag would leak onto this browser's cards.
+  const objectiveReasons = result.reasons.filter(
+    (r) => !isFandomReason(r)
+  );
+  const reasons = [...assessed.reasons, ...objectiveReasons];
+
+  return {
+    ...result,
+    score: Math.round(score),
+    reasons,
+    headline: buildHeadline(game, reasons, result.closeness, result.volatility),
+    fandom: {
+      favorite: assessed.favorite,
+      rival: assessed.rival,
+      bonus: Math.round(assessed.bonus),
+    },
+  };
+}
+
+/** Tags produced by assessFandom, which are viewer-specific. */
+function isFandomReason(reason: string): boolean {
+  return (
+    reason.includes("your team") ||
+    reason.startsWith("UPSET ALERT") ||
+    reason.includes("hate watch")
+  );
 }
 
 /**

@@ -16,7 +16,10 @@ export default async function RootLayout({
   const appUser = await getCurrentAppUser();
 
   return (
-    <html lang="en">
+    // suppressHydrationWarning: /gameday sets the theme class on <html> before
+    // React hydrates (see src/app/gameday/layout.tsx) to avoid a white flash.
+    // Without this, React warns about the server/client attribute mismatch.
+    <html lang="en" suppressHydrationWarning>
       <body>
         <AppShell appUser={appUser}>{children}</AppShell>
       </body>

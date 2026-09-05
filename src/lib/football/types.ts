@@ -211,4 +211,13 @@ export interface ExcitementResult {
    * the objective score is the default experience.
    */
   fandom: FandomMatch;
+  /**
+   * The score BEFORE any fandom adjustment and before the stopped-play
+   * multiplier. Exposed so each browser can re-apply its OWN team preferences
+   * to a shared snapshot — see personalizeScore() in excitement.ts. Without
+   * this, two people on one shared URL would fight over one set of teams.
+   */
+  objectiveScore: number;
+  /** Damping applied for halftime / delays. 1 when the ball is in play. */
+  stoppedMultiplier: number;
 }

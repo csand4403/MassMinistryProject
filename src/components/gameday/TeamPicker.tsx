@@ -106,8 +106,8 @@ export function TeamPicker({
   };
 
   return (
-    <div className="rounded-lg bg-slate-50 p-3" ref={boxRef}>
-      <p className="text-xs font-medium text-slate-600">{label}</p>
+    <div className="rounded-lg bg-slate-50 p-3 dark:bg-white/5" ref={boxRef}>
+      <p className="text-xs font-medium text-slate-600 dark:text-slate-300">{label}</p>
 
       {/* ── Current picks ─────────────────────────────────────────────────── */}
       {selected.length > 0 && (
@@ -143,25 +143,25 @@ export function TeamPicker({
           }}
           onFocus={() => setOpen(true)}
           placeholder={loading ? "Loading teams…" : "Search teams…"}
-          className="w-full rounded-lg border border-slate-200 px-2 py-1.5 text-xs"
+          className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder:text-slate-400 dark:border-white/10 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
         />
 
         {open && matches.length > 0 && (
-          <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+          <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg dark:border-white/10 dark:bg-slate-800">
             {matches.map((team) => (
               <li key={`${team.league}:${team.id}`}>
                 <button
                   onClick={() => add(team)}
-                  className="flex w-full items-center gap-2 px-2 py-2 text-left text-xs hover:bg-slate-50"
+                  className="flex w-full items-center gap-2 px-2 py-2 text-left text-xs text-slate-800 hover:bg-slate-50 dark:text-slate-100 dark:hover:bg-white/10"
                 >
                   {team.logo ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={team.logo} alt="" className="h-4 w-4 shrink-0 object-contain" />
                   ) : (
-                    <span className="h-4 w-4 shrink-0 rounded-full bg-slate-200" />
+                    <span className="h-4 w-4 shrink-0 rounded-full bg-slate-200 dark:bg-slate-700" />
                   )}
                   <span className="min-w-0 flex-1 truncate">{team.displayName}</span>
-                  <span className="shrink-0 text-[10px] text-slate-400">
+                  <span className="shrink-0 text-[10px] text-slate-400 dark:text-slate-500">
                     {team.abbreviation}
                   </span>
                 </button>
@@ -171,7 +171,7 @@ export function TeamPicker({
         )}
       </div>
 
-      <p className="mt-1 text-[11px] text-slate-400">{hint}</p>
+      <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">{hint}</p>
     </div>
   );
 }

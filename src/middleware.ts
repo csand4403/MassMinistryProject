@@ -6,8 +6,27 @@ const SCHEDULER_ALLOWED_SETTINGS = new Set(["templates", "ministers"]);
 
 type AppRole = "ADMIN" | "SCHEDULER" | "MINISTER";
 
+/**
+ * GAMEDAY_ONLY turns a deployment into the football app and nothing else:
+ * "/" redirects to /gameday and every parish route 404s.
+ *
+ * This exists so the dashboard can be given a PUBLIC url and shared without
+ * also publishing the parish scheduling app that shares this deployment.
+ * Set GAMEDAY_ONLY=1 on any host serving the football tool to outsiders.
+ */
+const GAMEDAY_ONLY = process.env.GAMEDAY_ONLY === "1";
+
 export async function middleware(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl;
+
+  if (GAMEDAY_ONLY) {
+    // The matcher below already excludes /gameday and /api/gameday, so
+    // anything reaching here is a parish route.
+    if (pathname === "/") {
+      return NextResponse.redirect(new URL("/gameday", request.url));
+    }
+    return new NextResponse("Not found", { status: 404 });
+  }
 
   if (PUBLIC_PATHS.has(pathname)) {
     const response = NextResponse.next();

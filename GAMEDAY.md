@@ -211,6 +211,28 @@ already be watching — but if you want more resolution up there, raise
 
 ---
 
+## Dashboard design notes
+
+The board is glanced at on a phone, in a dark room, during a commercial break.
+That single sentence drove most of the decisions:
+
+- **Dark by default.** Evening viewing is the whole use case, and a dark ground
+  lets team colors and the excitement number carry the hierarchy. Light and
+  "follow the OS" are both available in Settings.
+- **Exactly one thing is biggest.** The excitement score. Everything else is
+  support. Data density is the enemy of a "where do I go" decision, so the card
+  shows the four things that answer it and nothing else.
+- **Changes animate, they don't blink.** Scores and excitement count up over
+  ~450ms and briefly tint; a card whose score changed pulses once. Hard-cutting
+  numbers get missed entirely (change blindness); flashing ones become noise.
+- **Team color as an accent, never a fill.** A thin bar beside each team and the
+  win-probability bar itself. Brand recognition without a contrast problem.
+- **Trust signals.** A connection dot, a live "updated 12s ago" that ticks on
+  its own, and a manual refresh — so when a number looks stale you can confirm
+  it rather than wonder whether the stream died.
+- **Settings as a bottom sheet.** The old inline accordion pushed the board
+  down and you lost your place.
+
 ## Swapping the data source
 
 The data layer sits behind one interface, `ScoreboardProvider`
@@ -284,10 +306,11 @@ All optional — the defaults work.
 | `FOOTBALL_IDLE_POLL_MS` | `300000` | Poll interval when nothing is live |
 | `FOOTBALL_ALERT_THRESHOLD` | `80` | Default alert threshold |
 | `FOOTBALL_ALERT_COOLDOWN_MS` | `600000` | Per-game quiet period |
-| `NTFY_TOPIC` | *(empty)* | ntfy topic; can also be set in the UI |
+| `NTFY_TOPIC` | *(empty)* | ntfy topic for server-side phone pushes |
 | `NTFY_SERVER` | `https://ntfy.sh` | Self-hosted ntfy server |
 | `APP_BASE_URL` | *(empty)* | Used as the alert click-through link |
-| `GAMEDAY_SETTINGS_PATH` | `.gameday/settings.json` | Where preferences persist |
+| `GAMEDAY_SETTINGS_PATH` | `.gameday/settings.json` | Where the server's own preferences persist |
+| `GAMEDAY_ONLY` | *(unset)* | `1` serves only the football app; parish routes 404. **Set this on any shared deployment.** |
 
 ---
 
@@ -300,25 +323,96 @@ All optional — the defaults work.
 | `GET /api/gameday/history` | Excitement timelines recorded this session; `?gameId=` for one |
 | `GET,POST /api/gameday/settings` | Read / update threshold, cooldown, ntfy topic, leagues, teams |
 | `GET /api/gameday/teams?league=` | Team list for the pickers (~760 college teams) |
+| `GET /api/gameday/health` | Liveness probe — engine state, no upstream call |
 | `POST /api/gameday/test-alert` | Send a test notification |
 
 ---
 
-## Deployment
+## Putting it on a public URL
 
-Runs as a **single unit** — one repo, one `npm run dev`, one `npm run build`.
+### ⚠️ Read this first
 
-One caveat worth knowing: engine state (win-probability history for the
-volatility term, alert debounce bookkeeping, excitement timelines) is held **in
-memory in a single process**. That's the right fit for a single-user personal
-tool run with `npm start` on a always-on box, a Raspberry Pi, or a small VPS.
+This repo also contains the **MassMinistry parish app**, and the repo is
+**public**. Two things follow:
 
-On a serverless platform each function instance gets its own empty copy, so the
-volatility term would never warm up and debounce wouldn't hold across
-invocations. If you deploy to Vercel or similar, move `winProbHistory`,
-`alertState` and `timelines` out of `src/lib/football/store.ts` into Redis or
-Postgres — the store is a small module with a narrow surface, deliberately, to
-make exactly that swap easy.
+1. **Always set `GAMEDAY_ONLY=1`** on any deployment you share. It makes `/`
+   redirect to `/gameday` and every parish route return 404, so a link you hand
+   out cannot reach the scheduling app. The Render blueprint sets it for you.
+2. **Rotate the Supabase keys.** `.env.local.example` currently has a real
+   `service_role` key committed to a public repo. That key bypasses row-level
+   security entirely. See [Rotating the leaked key](#rotating-the-leaked-key).
+
+### Option A — Render (recommended, free, persistent)
+
+```bash
+git push                       # push this branch
+# render.com -> New -> Blueprint -> pick this repo
+```
+
+`render.yaml` is committed, so Render builds it and hands back a public
+`https://<name>.onrender.com` URL. Share that.
+
+The free instance sleeps after ~15 minutes idle; the next visit takes ~30s to
+wake and starts with an empty volatility history (scores are still correct, the
+"recent swing" term just needs a few polls to warm up). Bump the instance type
+if you want it awake all Saturday.
+
+### Option B — instant tunnel (nothing to sign up for)
+
+Fastest way to get a friend looking at what's on your screen right now:
+
+```bash
+GAMEDAY_ONLY=1 npm run build && GAMEDAY_ONLY=1 npm start   # terminal 1
+npx cloudflared tunnel --url http://localhost:3000          # terminal 2
+```
+
+Cloudflared prints a public `https://….trycloudflare.com` URL. It lives only
+as long as both commands run, which makes it ideal for "watch this with me
+right now" and useless for anything permanent.
+
+### Why not Vercel
+
+Vercel is the obvious choice for Next.js and the wrong one here. This app polls
+on a timer and keeps win-probability history **in memory** to measure
+volatility, which needs one long-lived process. On serverless each request can
+land on a different cold instance, so the volatility term never warms up and
+alert debouncing never holds — you'd get repeat notifications for the same
+game.
+
+If you do want serverless, move `winProbHistory`, `alertState` and `timelines`
+out of `src/lib/football/store.ts` into Redis. The store is deliberately a
+small module with a narrow surface to make exactly that swap easy.
+
+### What your friends see
+
+Preferences — teams, threshold, leagues, theme — are stored **per browser** in
+`localStorage`, and the board is re-ranked locally from them. So everyone who
+opens the link gets their own teams and their own ranking, and nobody
+overwrites anybody. Browser notifications likewise follow each viewer's own
+threshold.
+
+The one shared thing is the **ntfy push channel**: the server sends those, so
+they use the deployment's own `NTFY_TOPIC` and the owner's saved teams. If you
+want your friend to get phone pushes for *his* teams, he needs his own
+deployment.
+
+## Rotating the leaked key
+
+`.env.local.example` in this public repo contains a live Supabase
+`service_role` key (and the anon key). Removing the file does **not** help on
+its own — git history keeps it, and anyone can read history on a public repo.
+
+1. Supabase dashboard → Project Settings → API → **roll** both the `anon` and
+   `service_role` keys.
+2. Put the new values in `.env.local` (already gitignored) and in the Vercel
+   project's environment variables.
+3. Replace `.env.local.example` with placeholders (`your-anon-key-here`), not
+   real values.
+4. Consider making the repo private, or extracting this dashboard into its own
+   repo so it can be public without dragging parish code along.
+
+Step 1 is the one that actually matters — until the keys are rolled, they are
+compromised regardless of what happens to the file.
 
 ---
 

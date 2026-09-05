@@ -13,8 +13,10 @@
 // no ntfy topic is configured.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LeagueId, RankedGame, TeamRef } from "@/lib/football/types";
+import { fandomKey, personalizeScore } from "@/lib/football/excitement";
+import type { ViewerPrefs } from "./useViewerPrefs";
 
 export interface FiredAlert {
   gameId: string;
@@ -49,35 +51,51 @@ export type ConnectionState = "connecting" | "live" | "polling" | "error";
 /** Fallback poll cadence used only when SSE is unavailable. */
 const FALLBACK_POLL_MS = 20_000;
 
+/**
+ * Re-score and re-rank a server snapshot using THIS browser's team picks.
+ *
+ * The server ranks with its own settings; every viewer re-ranks locally so a
+ * shared URL doesn't mean shared preferences.
+ */
+export function usePersonalizedGames(
+  snapshot: Snapshot | null,
+  prefs: ViewerPrefs
+): RankedGame[] {
+  return useMemo(() => {
+    if (!snapshot) return [];
+
+    const fandom = {
+      favorites: new Set(prefs.favorites.map((t) => fandomKey(t.league, t.id))),
+      rivals: new Set(prefs.rivals.map((t) => fandomKey(t.league, t.id))),
+    };
+    const leagues = new Set(prefs.leagues);
+
+    return snapshot.games
+      .filter((entry) => leagues.has(entry.game.league))
+      .map((entry) => ({
+        ...entry,
+        excitement: personalizeScore(entry.game, entry.excitement, fandom),
+      }))
+      // Same ordering rule as the server: live games first, then by score.
+      .sort((a, b) => {
+        const aLive = a.game.state === "in" ? 1 : 0;
+        const bLive = b.game.state === "in" ? 1 : 0;
+        if (aLive !== bLive) return bLive - aLive;
+        return b.excitement.score - a.excitement.score;
+      });
+  }, [snapshot, prefs.favorites, prefs.rivals, prefs.leagues]);
+}
+
 export function useGameday() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
 
-  // Alerts already surfaced as a browser notification, so a reconnect (which
-  // resends the whole recentAlerts list) doesn't re-notify for old events.
-  const notifiedRef = useRef<Set<string>>(new Set());
-  const seededRef = useRef(false);
-
+  // Browser notifications are raised by the Dashboard from THIS viewer's
+  // personalized scores (see useLocalAlerts), not from the server's
+  // recentAlerts — the server alerts on the deployment owner's teams, which
+  // are not necessarily this viewer's.
   const handleSnapshot = useCallback((next: Snapshot) => {
     setSnapshot(next);
-
-    const seen = notifiedRef.current;
-    // On the very first snapshot, mark everything as already-seen: alerts that
-    // fired before the page opened are history, not news.
-    if (!seededRef.current) {
-      seededRef.current = true;
-      for (const alert of next.recentAlerts ?? []) {
-        seen.add(alertKey(alert));
-      }
-      return;
-    }
-
-    for (const alert of next.recentAlerts ?? []) {
-      const key = alertKey(alert);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      raiseBrowserNotification(alert);
-    }
   }, []);
 
   useEffect(() => {
@@ -140,43 +158,22 @@ export function useGameday() {
     };
   }, [handleSnapshot]);
 
-  /** Persist a settings change and optimistically reflect it in the UI. */
-  const saveSettings = useCallback(async (patch: Partial<AlertSettings>) => {
-    setSnapshot((prev) =>
-      prev ? { ...prev, settings: { ...prev.settings, ...patch } } : prev
-    );
+  /**
+   * Pull a fresh snapshot on demand. Real-time dashboards need a manual
+   * refresh: when a number looks stale, people want to confirm it rather than
+   * wonder whether the stream died.
+   */
+  const refresh = useCallback(async () => {
     try {
-      const res = await fetch("/api/gameday/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
+      const res = await fetch("/api/gameday", { cache: "no-store" });
       if (!res.ok) return;
-      const settings = (await res.json()) as AlertSettings;
-      setSnapshot((prev) => (prev ? { ...prev, settings } : prev));
+      setSnapshot((await res.json()) as Snapshot);
     } catch {
-      // Offline — the optimistic value stands until the next snapshot.
+      // Leave the last good snapshot on screen rather than blanking the board.
     }
   }, []);
 
-  return { snapshot, connection, saveSettings };
-}
-
-function alertKey(alert: FiredAlert): string {
-  return `${alert.gameId}:${alert.firedAt}`;
-}
-
-function raiseBrowserNotification(alert: FiredAlert): void {
-  if (typeof window === "undefined" || !("Notification" in window)) return;
-  if (Notification.permission !== "granted") return;
-  try {
-    new Notification(`🏈 ${alert.label} · ${alert.score}`, {
-      body: alert.headline,
-      tag: alert.gameId, // Replaces an earlier alert for the same game.
-    });
-  } catch {
-    // Some browsers forbid constructing Notification outside a SW context.
-  }
+  return { snapshot, connection, refresh };
 }
 
 /** Ask for notification permission; returns the resulting permission state. */

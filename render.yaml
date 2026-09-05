@@ -1,0 +1,40 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Render blueprint for "Get Over There Now".
+#
+# Render (not Vercel) because this app polls on a timer and keeps win-probability
+# history in memory to measure volatility. That needs ONE long-lived process.
+# On serverless every request may hit a different cold instance, so the
+# volatility term never warms up and alert debouncing never holds.
+#
+# Deploy:
+#   1. Push this branch to GitHub.
+#   2. render.com  ->  New  ->  Blueprint  ->  pick this repo.
+#   3. Render reads this file, builds, and hands you a public URL.
+#
+# Free tier note: the instance sleeps after ~15 minutes with no traffic. The
+# first visit after that takes ~30s to wake and the board starts with an empty
+# volatility history. Fine for sharing with a friend; move to the paid instance
+# type if you want it awake all Saturday.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  - type: web
+    name: get-over-there-now
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    # Cheap and always available, and it warms the engine on each wake.
+    healthCheckPath: /api/gameday/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Serve ONLY the football app. Without this the parish scheduling app
+      # that shares this repo would also be reachable at the public URL.
+      - key: GAMEDAY_ONLY
+        value: "1"
+      - key: FOOTBALL_LEAGUES
+        value: college-football
+      # Optional: set in the Render dashboard to get phone pushes.
+      - key: NTFY_TOPIC
+        sync: false

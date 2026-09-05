@@ -17,10 +17,14 @@ const NAV_ITEMS = [
 
 export function AppShell({ children, appUser }: { children: React.ReactNode; appUser: AppUser | null }) {
   const pathname = usePathname();
-  // The football dashboard is a standalone personal tool that shares this
-  // deployment but none of the parish chrome — render it bare, same as login.
-  const isBare =
-    pathname === "/login" || pathname?.startsWith("/gameday") === true;
+  // The football dashboard owns its whole viewport — its own dark theme,
+  // sticky header and full-bleed layout — so it gets no wrapper at all, not
+  // even the parish background colour or max-width container.
+  if (pathname?.startsWith("/gameday")) {
+    return <>{children}</>;
+  }
+
+  const isBare = pathname === "/login";
 
   if (isBare) {
     return (
