@@ -349,8 +349,13 @@ This repo also contains the **MassMinistry parish app**, and the repo is
 
 ```bash
 git push                       # push this branch
-# render.com -> New -> Blueprint -> pick this repo
+# render.com -> New -> Blueprint -> pick this repo -> Apply
 ```
+
+Verified end to end from a clean checkout: `npm ci --include=dev && npm run
+build && npm start` under the blueprint's exact environment, then checked that
+`/` redirects, `/gameday` and the health endpoint return 200, every parish
+route 404s, and 99 games poll with no error.
 
 `render.yaml` is committed, so Render builds it and hands back a public
 `https://<name>.onrender.com` URL. Share that.

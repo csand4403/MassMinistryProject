@@ -22,7 +22,12 @@ services:
     name: get-over-there-now
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build
+    # --include=dev is REQUIRED. NODE_ENV=production below applies to the
+    # build step too, and npm skips devDependencies in production mode — which
+    # would drop typescript, tailwindcss and autoprefixer, all of which are
+    # needed to BUILD. Without typescript, Next cannot resolve the "@/*" path
+    # aliases and the build dies with "Module not found" on every import.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     # Cheap and always available, and it warms the engine on each wake.
     healthCheckPath: /api/gameday/health
