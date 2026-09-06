@@ -4,6 +4,11 @@ Liturgical ministry scheduling application for **St. Michael the Archangel Catho
 
 Built for parish liturgy coordinators to manage Sunday and feast-day Mass assignments, track minister availability, and run real-time check-in on Sunday morning.
 
+> **Also in this repo:** [`GAMEDAY.md`](./GAMEDAY.md) documents *Get Over There
+> Now*, a standalone live-football dashboard served at `/gameday`. It shares
+> this Next.js deployment but nothing else — no shared data, no auth, and no
+> effect on the ministry app.
+
 ---
 
 ## Tech Stack

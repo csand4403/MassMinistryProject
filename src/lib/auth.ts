@@ -18,6 +18,16 @@ export const ADMIN_PATHS = ["/reports"] as const;
 export const SCHEDULER_ALLOWED_SETTINGS = new Set(["templates", "ministers"]);
 
 export async function getCurrentAppUser(): Promise<AppUser | null> {
+  // Supabase may be unconfigured entirely — the football dashboard bundled in
+  // this deployment runs without it — so never let a missing/invalid config
+  // throw out of the root layout and take every page down with it.
+  if (
+    !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  ) {
+    return null;
+  }
+
   const supabase = await createClient();
   const {
     data: { user },

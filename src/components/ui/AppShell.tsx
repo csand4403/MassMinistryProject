@@ -17,9 +17,16 @@ const NAV_ITEMS = [
 
 export function AppShell({ children, appUser }: { children: React.ReactNode; appUser: AppUser | null }) {
   const pathname = usePathname();
-  const isLogin = pathname === "/login";
+  // The football dashboard owns its whole viewport — its own dark theme,
+  // sticky header and full-bleed layout — so it gets no wrapper at all, not
+  // even the parish background colour or max-width container.
+  if (pathname?.startsWith("/gameday")) {
+    return <>{children}</>;
+  }
 
-  if (isLogin) {
+  const isBare = pathname === "/login";
+
+  if (isBare) {
     return (
       <div className="min-h-screen" style={{ backgroundColor: "#f8f7f5" }}>
         <main className="mx-auto w-full max-w-5xl px-4 py-6">{children}</main>
